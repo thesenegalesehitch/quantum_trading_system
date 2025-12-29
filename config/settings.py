@@ -345,6 +345,14 @@ class MLConfig:
     USE_OPTUNA: bool = True
     OPTUNA_TRIALS: int = 50
 
+    # Ensemble de modèles
+    USE_ENSEMBLE: bool = True  # Utiliser l'ensemble avancé par défaut
+    ENSEMBLE_MODELS: List[str] = field(default_factory=lambda: [
+        "xgboost", "lightgbm", "catboost", "random_forest"
+    ])
+    ENSEMBLE_OPTIMIZE: bool = True  # Optimiser les hyperparamètres
+    ENSEMBLE_TRIALS_PER_MODEL: int = 20  # Essais Optuna par modèle
+
 
 @dataclass
 class RiskConfig:

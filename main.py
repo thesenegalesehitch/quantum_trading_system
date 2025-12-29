@@ -51,7 +51,7 @@ from analysis.smc import SmartMoneyConceptsAnalyzer
 from analysis.ichimoku import IchimokuAnalyzer
 from ml.features import MLFeaturesPreparer
 from ml.model import SignalClassifier
-from ml.trainer import ModelTrainer
+from ml.trainer import ModelTrainer, EnsembleTrainer
 from risk.manager import RiskManager
 from risk.circuit_breaker import CircuitBreaker
 from risk.calendar import EconomicCalendar
@@ -370,31 +370,84 @@ class QuantumTradingSystem:
         rs = gain / (loss + 1e-10)
         return 100 - (100 / (1 + rs))
     
-    def train_model(self, symbol: str) -> dict:
-        """Entraîne le modèle ML."""
+    def train_model(self, symbol: str, use_ensemble: bool = True) -> dict:
+        """Entraîne le modèle ML avec ensemble avancé."""
         print(f"\n🧠 Entraînement du modèle ML sur {symbol}...")
-        
+        print(f"Mode: {'Ensemble avancé' if use_ensemble else 'XGBoost simple'}")
+
         if symbol not in self.data:
             self.load_data(symbol)
-        
+
         df = self.data[symbol]
-        
+
         if len(df) < 1000:
             return {"error": "Données insuffisantes (min 1000 bougies)"}
-        
-        results = self.ml_trainer.train_with_cross_validation(df)
-        
-        print("\n=== Résultats de l'entraînement ===")
+
+        # Utiliser l'ensemble avancé par défaut
+        results = self.ml_trainer.train_with_cross_validation(df, use_ensemble=use_ensemble)
+
+        print(f"\n=== Résultats de l'entraînement ({results.get('model_type', 'unknown')}) ===")
         print(f"Accuracy moyenne CV: {results['cv_summary']['mean_accuracy']:.3f}")
-        print(f"AUC moyenne: {results['cv_summary']['mean_auc']:.3f}")
-        
+        print(f"AUC moyenne: {results['cv_summary']['mean_auc']:.4f}")
+
+        if 'walk_forward' in results:
+            wf = results['walk_forward']
+            print(f"Validation walk-forward: AUC = {wf['mean_auc']:.4f} ± {wf['std_auc']:.4f}")
+
         # Stats de trading
-        stats = self.ml_trainer.get_trading_statistics(df)
+        if use_ensemble and self.ml_trainer.ensemble_trainer:
+            # Pour l'ensemble, utiliser les stats de l'ensemble
+            try:
+                X, y = self.ml_trainer.preparer.prepare_train_data(df)
+                probas = self.ml_trainer.ensemble_trainer.predict_proba(X)
+                stats = self._calculate_trading_stats(probas, y)
+            except:
+                stats = {"error": "Impossible de calculer les stats de trading"}
+        else:
+            stats = self.ml_trainer.get_trading_statistics(df)
+
         print("\n=== Statistiques de Trading ===")
-        for k, v in stats.items():
-            print(f"  {k}: {v}")
-        
+        if isinstance(stats, dict):
+            for k, v in stats.items():
+                if isinstance(v, float):
+                    print(f"  {k}: {v:.2f}")
+                else:
+                    print(f"  {k}: {v}")
+
         return results
+
+    def _calculate_trading_stats(self, probas: np.ndarray, y_true: pd.Series) -> dict:
+        """Calcule les statistiques de trading pour l'ensemble."""
+        min_proba = config.ml.MIN_PROBABILITY_THRESHOLD
+
+        # Trades au-dessus du seuil
+        above_threshold = probas >= min_proba
+        trades_taken = above_threshold.sum()
+
+        if trades_taken == 0:
+            return {
+                "trades_taken": 0,
+                "message": "Aucun trade au-dessus du seuil"
+            }
+
+        # Win rate sur les trades pris
+        wins = (y_true[above_threshold] == 1).sum()
+        win_rate = wins / trades_taken
+
+        # Comparaison avec random
+        overall_win_rate = y_true.mean()
+
+        return {
+            "trades_taken": int(trades_taken),
+            "total_opportunities": len(y_true),
+            "selectivity": trades_taken / len(y_true) * 100,
+            "wins": int(wins),
+            "losses": int(trades_taken - wins),
+            "win_rate": win_rate * 100,
+            "baseline_win_rate": overall_win_rate * 100,
+            "edge": (win_rate - overall_win_rate) * 100,
+            "threshold_used": min_proba * 100
+        }
     
     def analyze_correlation(self):
         """Analyse la corrélation entre les paires de devises actives."""
@@ -500,6 +553,11 @@ def main():
         action="store_true",
         help="Forcer le téléchargement des données"
     )
+    parser.add_argument(
+        "--simple-model",
+        action="store_true",
+        help="Utiliser le modèle XGBoost simple au lieu de l'ensemble avancé"
+    )
 
     args = parser.parse_args()
 
@@ -527,7 +585,8 @@ def main():
         system.analyze_symbol(args.symbol)
     
     elif args.mode == "train":
-        system.train_model(args.symbol)
+        use_ensemble = not args.simple_model
+        system.train_model(args.symbol, use_ensemble=use_ensemble)
     
     elif args.mode == "correlation":
         system.analyze_correlation()
