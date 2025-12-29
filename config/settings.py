@@ -348,7 +348,7 @@ class MLConfig:
     # Ensemble de modèles
     USE_ENSEMBLE: bool = True  # Utiliser l'ensemble avancé par défaut
     ENSEMBLE_MODELS: List[str] = field(default_factory=lambda: [
-        "xgboost", "lightgbm", "catboost", "random_forest"
+        "xgboost", "lightgbm", "random_forest"  # CatBoost désactivé pour compatibilité sklearn
     ])
     ENSEMBLE_OPTIMIZE: bool = True  # Optimiser les hyperparamètres
     ENSEMBLE_TRIALS_PER_MODEL: int = 20  # Essais Optuna par modèle

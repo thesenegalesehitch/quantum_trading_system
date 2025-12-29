@@ -86,15 +86,19 @@ class EnsembleTrainer:
                 verbose=-1
             )
 
-        # CatBoost
-        if CATBOOST_AVAILABLE:
-            models['catboost'] = cb.CatBoostClassifier(
-                iterations=100,
-                depth=6,
-                learning_rate=0.1,
-                random_state=42,
-                verbose=False
-            )
+        # CatBoost (désactivé temporairement pour compatibilité sklearn)
+        # if CATBOOST_AVAILABLE:
+        #     try:
+        #         models['catboost'] = cb.CatBoostClassifier(
+        #             iterations=100,
+        #             depth=6,
+        #             learning_rate=0.1,
+        #             random_state=42,
+        #             verbose=False
+        #         )
+        #     except:
+        #         print("⚠️ CatBoost incompatible avec cette version de sklearn")
+        #         CATBOOST_AVAILABLE = False
 
         # RandomForest (fallback)
         from sklearn.ensemble import RandomForestClassifier
@@ -157,15 +161,15 @@ class EnsembleTrainer:
                 }
                 model = lgb.LGBMClassifier(**params)
 
-            elif model_name == 'catboost':
-                params = {
-                    'iterations': trial.suggest_int('iterations', 50, 300),
-                    'depth': trial.suggest_int('depth', 3, 10),
-                    'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
-                    'random_state': 42,
-                    'verbose': False
-                }
-                model = cb.CatBoostClassifier(**params)
+            # elif model_name == 'catboost':
+            #     params = {
+            #         'iterations': trial.suggest_int('iterations', 50, 300),
+            #         'depth': trial.suggest_int('depth', 3, 10),
+            #         'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
+            #         'random_state': 42,
+            #         'verbose': False
+            #     }
+            #     model = cb.CatBoostClassifier(**params)
 
             else:
                 return 0.5  # Score neutre
@@ -194,8 +198,8 @@ class EnsembleTrainer:
             best_params['eval_metric'] = 'auc'
         elif model_name == 'lightgbm':
             best_params['verbose'] = -1
-        elif model_name == 'catboost':
-            best_params['verbose'] = False
+        # elif model_name == 'catboost':
+        #     best_params['verbose'] = False
 
         self.best_params[model_name] = best_params
         print(f"✅ Meilleurs paramètres pour {model_name}: AUC = {study.best_value:.4f}")
@@ -215,10 +219,10 @@ class EnsembleTrainer:
                 'subsample': 0.8, 'colsample_bytree': 0.8, 'random_state': 42,
                 'verbose': -1
             },
-            'catboost': {
-                'iterations': 100, 'depth': 6, 'learning_rate': 0.1,
-                'random_state': 42, 'verbose': False
-            },
+            # 'catboost': {
+            #     'iterations': 100, 'depth': 6, 'learning_rate': 0.1,
+            #     'random_state': 42, 'verbose': False
+            # },
             'random_forest': {
                 'n_estimators': 100, 'max_depth': 6, 'random_state': 42
             }
