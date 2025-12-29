@@ -183,8 +183,13 @@ class QuantumTradingSystem:
         if df.empty:
             return {"error": "Pas de données"}
 
+        # Récupérer le prix actuel en temps réel si possible
+        current_price = self.downloader.get_current_price(symbol)
+        if current_price is None:
+            current_price = df['Close'].iloc[-1]
+
         analysis = {
-            'current_price': df['Close'].iloc[-1]
+            'current_price': current_price
         }
 
         # 1. Hurst Exponent
@@ -591,6 +596,16 @@ def main():
         help="Symbole à analyser (optionnel - menu interactif si non spécifié)"
     )
     parser.add_argument(
+        "--list",
+        action="store_true",
+        help="Lister toutes les paires disponibles"
+    )
+    parser.add_argument(
+        "--auto",
+        action="store_true",
+        help="Chercher automatiquement la meilleure opportunité"
+    )
+    parser.add_argument(
         "--download",
         action="store_true",
         help="Forcer le téléchargement des données"
@@ -603,6 +618,46 @@ def main():
 
     args = parser.parse_args()
 
+    # 1. Lister les paires si demandé
+    if args.list:
+        symbols = config.symbols.ACTIVE_SYMBOLS
+        print("\n" + "="*50)
+        print("📋 LISTE DES PAIRES DISPONIBLES")
+        print("="*50)
+        for i, s in enumerate(symbols, 1):
+            name = config.symbols.DISPLAY_NAMES.get(s, s)
+            print(f" {i:2d}. {name:15} | Code: {s}")
+        print("="*50)
+        return
+
+    # Initialiser le système
+    system = QuantumTradingSystem()
+
+    # 2. Mode Auto-Signal
+    if args.auto:
+        print("\n🔍 Recherche de la meilleure opportunité en cours...")
+        results = system.scan_all_symbols()
+        
+        # Filtrer pour ne garder que BUY/SELL
+        opportunities = []
+        for sym, res in results.items():
+            if 'analysis' in res:
+                signal = res['analysis'].get('combined_signal')
+                if signal in ['BUY', 'SELL']:
+                    opportunities.append((sym, res))
+        
+        if not opportunities:
+            print("\n❌ Aucune opportunité claire détectée pour le moment.")
+            return
+            
+        # Trier par confiance
+        opportunities.sort(key=lambda x: x[1]['analysis'].get('confidence', 0), reverse=True)
+        best_sym, best_res = opportunities[0]
+        
+        print(f"\n🚀 Meilleure opportunité trouvée: {best_sym}")
+        system.analyze_symbol(best_sym)
+        return
+
     # Sélection du symbole si non spécifié
     if args.symbol is None and args.mode != "scan":
         selected = select_symbol_interactive()
@@ -611,12 +666,9 @@ def main():
         else:
             args.symbol = selected
 
-    # Initialiser le système
-    system = QuantumTradingSystem()
-
     # Pour le mode scan, pas besoin de symbole spécifique
     if args.mode != "scan":
-        # Charger les données
+        # Charger les données (utiliser download argument)
         system.load_data(args.symbol, force_download=args.download)
     
     # Exécuter selon le mode

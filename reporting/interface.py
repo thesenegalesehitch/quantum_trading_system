@@ -60,7 +60,7 @@ class TradingInterface:
         # Construire le rapport
         report = []
         report.append("═" * 50)
-        report.append("         QUANTUM TRADING SIGNAL")
+        report.append("       SIGNAL DE TRADING QUANTIQUE")
         report.append("═" * 50)
         report.append(f"Actif       : {config.symbols.DISPLAY_NAMES.get(symbol, symbol)}")
         report.append(f"Timestamp   : {timestamp}")
@@ -439,11 +439,13 @@ class TradingInterface:
             
             print(f"     💵 Taille suggérée: {Fore.YELLOW}{suggested_lot:.2f} lots{Style.RESET_ALL} (risque {risk_per_trade*100:.1f}%)")
 
+            risk_amount = config.risk.INITIAL_CAPITAL * risk_per_trade
             print(f"     📏 Risque par trade: ${risk_amount:.2f}")
             print(f"     🎯 Gain potentiel: ${risk_amount * rr_ratio:.2f}")
+            print(f"     ⚖️ Ratio R:R: {Fore.GREEN}{rr_ratio:.2f}{Style.RESET_ALL}")
 
             # Instructions d'exécution détaillées
-            print(f"\n  📋 ORDRES À PASSER:")
+            print(f"\n  📋 INSTRUCTIONS D'EXÉCUTION:")
             print(f"  ┌{'─'*58}┐")
             if combined_signal == 'BUY':
                 print(f"  │{Fore.GREEN}1. BUY LIMIT @ {entry}{' '*(58-len(f'1. BUY LIMIT @ {entry}'))}│")
@@ -460,6 +462,12 @@ class TradingInterface:
                     padding = ' ' * (58 - len(tp_text))
                     print(f"  │{Fore.GREEN}{tp_text}{padding}│")
             print(f"  └{'─'*58}┘")
+            
+            print(f"\n📝 NOTES STRATÉGIQUES:")
+            print(f"     • Déplacer le Stop-Loss au prix d'entrée (Break-Even) après TP1.")
+            print(f"     • Ne pas trader pendant les annonces économiques majeures.")
+            
+            print(f"\n⚠️ AVERTISSEMENT: Le trading comporte des risques substantiels.")
 
         print("="*50)
 

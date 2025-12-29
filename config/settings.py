@@ -222,7 +222,7 @@ class TimeframeConfig:
 class DataConfig:
     """Configuration du moteur de données."""
     # Période historique (en années)
-    HISTORICAL_YEARS: int = 3  # Augmenté à 3 ans
+    HISTORICAL_YEARS: int = 2  # Limité à 2 ans pour les données 1h sur yfinance
 
     # Sources de données avec clés API
     PRIMARY_DATA_SOURCE: str = "yfinance"
@@ -254,7 +254,7 @@ class DataConfig:
     
     # Cache local
     CACHE_ENABLED: bool = True
-    CACHE_EXPIRY_HOURS: int = 24
+    CACHE_EXPIRY_HOURS: int = 48
 
 
 @dataclass

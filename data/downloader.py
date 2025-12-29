@@ -423,20 +423,27 @@ class DataDownloader:
         interval: str = "1h"
     ) -> Optional[pd.DataFrame]:
         """
-        Charge les données depuis le cache.
+        Charge les données depuis le cache si elles ne sont pas trop vieilles.
         
         Args:
             symbol: Symbole à charger
             interval: Intervalle des bougies
         
         Returns:
-            DataFrame ou None si non trouvé
+            DataFrame ou None si non trouvé ou expiré
         """
         cache_file = self._get_cache_path(symbol, interval)
         
         if os.path.exists(cache_file):
-            print(f"📦 Chargement depuis le cache: {symbol} ({interval})")
-            return pd.read_parquet(cache_file)
+            # Vérifier l'âge du cache
+            cache_time = datetime.fromtimestamp(os.path.getmtime(cache_file))
+            expiry_hours = config.data.CACHE_EXPIRY_HOURS
+            
+            if datetime.now() - cache_time < timedelta(hours=expiry_hours):
+                print(f"📦 Chargement depuis le cache: {symbol} ({interval})")
+                return pd.read_parquet(cache_file)
+            else:
+                print(f"🔄 Cache expiré pour {symbol} ({interval}), re-téléchargement nécessaire")
         
         return None
     

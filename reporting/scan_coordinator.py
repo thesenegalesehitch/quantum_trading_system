@@ -97,10 +97,10 @@ class ScanCoordinator:
         sell_signals = len([d for d in results.values() if 'analysis' in d and d['analysis']['combined_signal'] == 'SELL'])
 
         report = []
-        report.append("=== SCAN SUMMARY ===")
-        report.append(f"Total symbols: {total_symbols}")
-        report.append(f"Successful analyses: {successful_analyses}")
-        report.append(f"Buy signals: {buy_signals}")
-        report.append(f"Sell signals: {sell_signals}")
+        report.append("=== RÉSUMÉ DU SCAN ===")
+        report.append(f"Total symboles : {total_symbols}")
+        report.append(f"Analyses réussies : {successful_analyses}")
+        report.append(f"Signaux d'achat (BUY) : {buy_signals}")
+        report.append(f"Signaux de vente (SELL) : {sell_signals}")
 
         return "\n".join(report)

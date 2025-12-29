@@ -66,6 +66,18 @@ class StressTestResult:
     worst_asset: str
     worst_asset_loss: float
 
+@dataclass
+class TradeSetup:
+    """Configuration d'un trade."""
+    symbol: str
+    signal: str
+    entry_price: float
+    stop_loss: float
+    take_profits: List[Dict[str, Any]]
+    risk_reward: float
+    suggested_lot: float
+    timestamp: datetime
+
 class RiskManager:
     """
     Moteur de calcul des risques avancés.
@@ -111,6 +123,84 @@ class RiskManager:
                 'commodity_spike': 0.40
             }
         }
+
+    def create_trade_setup(self, df: pd.DataFrame, symbol: str, signal: str) -> Optional[TradeSetup]:
+        """
+        Calcule les paramètres optimaux pour un trade.
+        
+        Args:
+            df: DataFrame avec données et indicateurs
+            symbol: Symbole tradé
+            signal: BUY ou SELL
+            
+        Returns:
+            TradeSetup complet
+        """
+        if df.empty or signal not in ['BUY', 'SELL']:
+            return None
+            
+        current_price = df['Close'].iloc[-1]
+        atr = df['atr'].iloc[-1] if 'atr' in df.columns else (current_price * 0.001)
+        
+        # 1. Stop Loss (basé sur ATR)
+        atr_multiplier = config.risk.ATR_MULTIPLIER
+        sl_distance = atr * atr_multiplier
+        
+        if signal == 'BUY':
+            stop_loss = current_price - sl_distance
+        else:
+            stop_loss = current_price + sl_distance
+            
+        # 2. Take Profits (basé sur les niveaux de risque)
+        take_profits = []
+        tp_levels = config.risk.TP_LEVELS
+        
+        for level in tp_levels:
+            ratio = level['ratio']
+            size_pct = level['size_percent']
+            
+            if signal == 'BUY':
+                tp_price = current_price + (sl_distance * ratio)
+            else:
+                tp_price = current_price - (sl_distance * ratio)
+                
+            take_profits.append({
+                'price': round(float(tp_price), 5),
+                'size_percent': size_pct,
+                'ratio': ratio
+            })
+            
+        # 3. Risk-Reward Ratio (premier TP)
+        risk = abs(current_price - stop_loss)
+        reward = abs(take_profits[0]['price'] - current_price)
+        rr_ratio = reward / risk if risk > 0 else 0
+        
+        # 4. Position Sizing (Lot Size)
+        risk_per_trade = config.risk.RISK_PER_TRADE
+        initial_capital = config.risk.INITIAL_CAPITAL
+        risk_amount = initial_capital * risk_per_trade
+        
+        # Propriétés du symbole pour le calcul des lots
+        pair_props = config.symbols.PAIR_PROPERTIES.get(symbol, {})
+        pip_size = pair_props.get('pip_size', 0.0001)
+        pip_value = pair_props.get('pip_value', 10)
+        
+        sl_pips = risk / pip_size
+        if sl_pips > 0:
+            suggested_lot = risk_amount / (sl_pips * pip_value)
+        else:
+            suggested_lot = 0.01
+            
+        return TradeSetup(
+            symbol=symbol,
+            signal=signal,
+            entry_price=round(float(current_price), 5),
+            stop_loss=round(float(stop_loss), 5),
+            take_profits=take_profits,
+            risk_reward=round(float(rr_ratio), 2),
+            suggested_lot=round(float(max(suggested_lot, 0.01)), 2),
+            timestamp=datetime.now()
+        )
 
     def calculate_var(self, portfolio: Dict[str, float], confidence: float = 0.95,
                      method: VaRMethod = VaRMethod.HISTORICAL,
