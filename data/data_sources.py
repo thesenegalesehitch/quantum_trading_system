@@ -621,30 +621,28 @@ if __name__ == "__main__":
     print("=" * 60)
     print("TEST DES SOURCES DE DONNÉES")
     print("=" * 60)
-    
+
     loader = MultiSourceDataLoader()
-    
+
     print(f"\nSources disponibles: {loader.get_available_sources()}")
-    
-    # Test avec EUR/USD
-    print("\n" + "=" * 60)
-    print("TEST EUR/USD")
-    print("=" * 60)
-    
-    df, source = loader.fetch_with_fallback("EURUSD=X", "1h")
-    if not df.empty:
-        print(f"\nSource: {source}")
-        print(f"Shape: {df.shape}")
-        print(f"Range: {df.index.min()} -> {df.index.max()}")
-        print(df.tail())
-    
-    # Test crypto
-    print("\n" + "=" * 60)
-    print("TEST BTC/USDT")
-    print("=" * 60)
-    
-    df_btc, source_btc = loader.fetch_with_fallback("BTCUSDT", "1h")
-    if not df_btc.empty:
-        print(f"\nSource: {source_btc}")
-        print(f"Shape: {df_btc.shape}")
-        print(df_btc.tail())
+
+    # Test avec plusieurs symboles (Forex, Métaux, Crypto)
+    test_symbols = [
+        "EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X",  # Forex majeurs
+        "GC=F", "SI=F",  # Métaux
+        "BTC-USD", "ETH-USD"  # Crypto
+    ]
+
+    for symbol in test_symbols:
+        print(f"\n{'='*60}")
+        print(f"TEST {symbol}")
+        print('='*60)
+
+        df, source = loader.fetch_with_fallback(symbol, "1h")
+        if not df.empty:
+            print(f"\nSource: {source}")
+            print(f"Shape: {df.shape}")
+            print(f"Range: {df.index.min()} -> {df.index.max()}")
+            print(df.tail(3))
+        else:
+            print("❌ Aucune donnée reçue")

@@ -546,12 +546,18 @@ class DataDownloader:
 if __name__ == "__main__":
     # Test du module
     downloader = DataDownloader()
-    
-    # Télécharger EUR/USD
-    eurusd_data = downloader.download_historical("EURUSD=X", years=2, interval="1h")
-    print(f"\nEUR/USD shape: {eurusd_data.shape}")
-    print(eurusd_data.head())
-    
-    # Valider les données
-    validation = downloader.validate_data(eurusd_data)
-    print(f"\nValidation: {validation}")
+
+    # Télécharger tous les symboles actifs
+    print("📊 Test du téléchargement pour tous les symboles actifs...")
+    all_data = downloader.download_all_symbols(years=2, interval="1h")
+
+    for symbol, data in all_data.items():
+        print(f"\n{symbol} shape: {data.shape}")
+        if not data.empty:
+            print(data.head(3))
+            # Valider les données
+            validation = downloader.validate_data(data)
+            print(f"Validation: {validation}")
+        else:
+            print("❌ Aucune donnée reçue")
+        print("-" * 50)

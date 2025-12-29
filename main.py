@@ -397,35 +397,47 @@ class QuantumTradingSystem:
         return results
     
     def analyze_correlation(self):
-        """Analyse la corrélation entre EUR/USD et Gold."""
-        print("\n🔗 Analyse de co-intégration EUR/USD vs Gold...")
-        
+        """Analyse la corrélation entre les paires de devises actives."""
+        print("\n🔗 Analyse de co-intégration entre paires de devises...")
+
         symbols = config.symbols.ACTIVE_SYMBOLS
-        
+
         for symbol in symbols:
             if symbol not in self.data:
                 self.load_data(symbol)
-        
+
         if len(self.data) < 2:
-            return {"error": "Besoin des deux symboles"}
-        
-        # Récupérer les séries
-        series = {s: self.data[s]['Close'] for s in symbols}
-        s1, s2 = list(series.values())
-        
-        # Test de co-intégration
-        result = self.coint_analyzer.test_cointegration(s1, s2)
-        
-        print(f"\nCo-intégration: {'OUI' if result['is_cointegrated'] else 'NON'}")
-        print(f"P-value: {result.get('pvalue', 'N/A')}")
-        
-        if result['is_cointegrated']:
-            arb = self.coint_analyzer.detect_arbitrage_opportunity(s1, s2)
-            print(f"Signal d'arbitrage: {arb['signal']}")
-            if arb['signal'] != 'NEUTRAL':
-                print(f"Action: {arb['action']}")
-        
-        return result
+            return {"error": "Besoin d'au moins deux symboles"}
+
+        # Analyser toutes les paires possibles
+        results = {}
+        symbol_list = list(self.data.keys())
+
+        for i in range(len(symbol_list)):
+            for j in range(i+1, len(symbol_list)):
+                s1_name, s2_name = symbol_list[i], symbol_list[j]
+                s1, s2 = self.data[s1_name]['Close'], self.data[s2_name]['Close']
+
+                print(f"\n🔍 Test {s1_name} vs {s2_name}...")
+
+                # Test de co-intégration
+                result = self.coint_analyzer.test_cointegration(s1, s2)
+
+                cointegrated = result.get('is_cointegrated', False)
+                pvalue = result.get('pvalue', 'N/A')
+
+                print(f"  Co-intégration: {'OUI' if cointegrated else 'NON'}")
+                print(f"  P-value: {pvalue}")
+
+                if cointegrated:
+                    arb = self.coint_analyzer.detect_arbitrage_opportunity(s1, s2)
+                    print(f"  Signal d'arbitrage: {arb['signal']}")
+                    if arb['signal'] != 'NEUTRAL':
+                        print(f"  Action: {arb['action']}")
+
+                results[f"{s1_name}_{s2_name}"] = result
+
+        return results
 
 
 def select_symbol_interactive() -> str:
@@ -518,8 +530,6 @@ def main():
         system.train_model(args.symbol)
     
     elif args.mode == "correlation":
-        # Charger Gold aussi
-        system.load_data("GC=F", force_download=args.download)
         system.analyze_correlation()
     
     elif args.mode == "signal":
