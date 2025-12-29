@@ -303,9 +303,6 @@ class TechnicalConfig:
 @dataclass
 class MLConfig:
     """Configuration du modèle Machine Learning."""
-    # Chemins des modèles
-    MODEL_PATH: str = "ml/models/ensemble_model.pkl"
-
     # Seuils de probabilité
     MIN_PROBABILITY_THRESHOLD: float = 0.75  # 75%
     STRONG_SIGNAL_THRESHOLD: float = 0.85   # 85%
@@ -441,40 +438,10 @@ class AlertConfig:
 
 
 @dataclass
-class DatabaseConfig:
-    """Configuration de la base de données."""
-    # PostgreSQL
-    POSTGRES_HOST: str = field(default_factory=lambda: os.getenv('POSTGRES_HOST', 'localhost'))
-    POSTGRES_PORT: int = 5432
-    POSTGRES_DB: str = field(default_factory=lambda: os.getenv('POSTGRES_DB', 'quantum_trading'))
-    POSTGRES_USER: str = field(default_factory=lambda: os.getenv('POSTGRES_USER', 'quantum'))
-    POSTGRES_PASSWORD: str = field(default_factory=lambda: os.getenv('POSTGRES_PASSWORD', ''))
-
-    # Redis
-    REDIS_HOST: str = field(default_factory=lambda: os.getenv('REDIS_HOST', 'localhost'))
-    REDIS_PORT: int = 6379
-    REDIS_DB: int = 0
-    REDIS_PASSWORD: str = field(default_factory=lambda: os.getenv('REDIS_PASSWORD', ''))
-
-    # Connection URLs
-    @property
-    def postgres_url(self) -> str:
-        return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
-
-    @property
-    def redis_url(self) -> str:
-        auth = f":{self.REDIS_PASSWORD}@" if self.REDIS_PASSWORD else ""
-        return f"redis://{auth}{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
-
-
-@dataclass
 class SystemConfig:
     """Configuration système globale."""
     # Mode de fonctionnement
     MODE: str = "backtest"  # "backtest", "paper", "live"
-
-    # API
-    API_KEY: str = field(default_factory=lambda: os.getenv('API_KEY', 'quantum-trading-key-2025'))
     
     # Logging
     LOG_LEVEL: str = "INFO"
@@ -504,7 +471,6 @@ class Config:
     backtest = BacktestConfig()
     alerts = AlertConfig()
     system = SystemConfig()
-    database = DatabaseConfig()
 
 
 # Accès rapide

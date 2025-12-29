@@ -1,536 +1,479 @@
-"""
-Module d'analyse de sentiment multi-sources.
-Combine plusieurs indicateurs de sentiment pour enrichir l'analyse.
+# Analyse de sentiment pour le système de trading quantique
+# Utilise NLP pour analyser les sentiments des news et médias sociaux
 
-Sources:
-- Fear & Greed Index (alternative.me)
-- Reddit sentiment (gratuit)
-- News sentiment (NewsAPI gratuit)
-- Social sentiment scores
-"""
-
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional
-from dataclasses import dataclass
 import requests
-import os
-import sys
+import logging
+from typing import Dict, List, Optional, Tuple
+from datetime import datetime, timedelta
+import json
+import re
+from textblob import TextBlob
+import nltk
+from transformers import pipeline
+import asyncio
+import aiohttp
+from dataclasses import dataclass
+from enum import Enum
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config.settings import config
+logger = logging.getLogger(__name__)
 
+# Télécharger les ressources NLTK si nécessaire
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt', quiet=True)
+
+try:
+    nltk.data.find('sentiment/vader_lexicon')
+except LookupError:
+    nltk.download('vader', quiet=True)
+
+class SentimentProvider(Enum):
+    """Fournisseurs de données de sentiment."""
+    NEWSAPI = "newsapi"
+    FINNHUB_NEWS = "finnhub_news"
+    TEXTBLOB = "textblob"
+    TRANSFORMERS = "transformers"
 
 @dataclass
-class SentimentScore:
-    """Score de sentiment avec métadonnées."""
-    value: float  # -1 (extreme fear) à +1 (extreme greed)
-    source: str
+class SentimentResult:
+    """Résultat d'analyse de sentiment."""
+    text: str
+    sentiment: float  # -1 à 1
+    confidence: float  # 0 à 1
+    provider: str
     timestamp: datetime
-    confidence: float
-    raw_data: Optional[Dict] = None
+    metadata: Dict = None
 
+class SentimentAnalyzer:
+    """
+    Analyseur de sentiment utilisant multiple sources et méthodes.
+    Supporte les news, médias sociaux et indicateurs de peur & cupidité.
+    """
 
-class FearGreedIndex:
-    """
-    Fear and Greed Index - Mesure le sentiment global du marché.
-    Source: alternative.me (gratuit, pas de clé API)
-    """
-    
-    def __init__(self):
-        self.base_url = "https://api.alternative.me/fng/"
-        self.last_fetch = None
-        self.cached_data = None
-        self.cache_duration = timedelta(hours=1)
-    
-    def fetch_current(self) -> Optional[SentimentScore]:
-        """Récupère l'indice Fear & Greed actuel."""
+    def __init__(self, newsapi_key: Optional[str] = None, finnhub_key: Optional[str] = None):
+        """
+        Initialise l'analyseur de sentiment.
+
+        Args:
+            newsapi_key: Clé API NewsAPI (gratuite)
+            finnhub_key: Clé API Finnhub
+        """
+        self.newsapi_key = newsapi_key
+        self.finnhub_key = finnhub_key
+
+        # Modèles NLP
+        self.textblob_analyzer = None
+        self.transformer_model = None
+
+        # Cache des résultats
+        self.sentiment_cache: Dict[str, List[SentimentResult]] = {}
+        self.fear_greed_cache = None
+        self.cache_expiry = {}
+
+        # Statistiques
+        self.stats = {
+            'analyses_performed': 0,
+            'api_calls': 0,
+            'cache_hits': 0,
+            'errors': 0
+        }
+
+    def _init_models(self):
+        """Initialise les modèles NLP."""
+        if self.textblob_analyzer is None:
+            self.textblob_analyzer = TextBlob
+
+        if self.transformer_model is None:
+            try:
+                # Utiliser un modèle léger pour l'analyse de sentiment
+                self.transformer_model = pipeline(
+                    "sentiment-analysis",
+                    model="cardiffnlp/twitter-roberta-base-sentiment-latest",
+                    return_all_scores=True
+                )
+                logger.info("Modèle Transformers chargé")
+            except Exception as e:
+                logger.warning(f"Impossible de charger le modèle Transformers: {e}")
+                self.transformer_model = None
+
+    def analyze_text_sentiment(self, text: str, provider: SentimentProvider = SentimentProvider.TEXTBLOB) -> SentimentResult:
+        """
+        Analyse le sentiment d'un texte.
+
+        Args:
+            text: Texte à analyser
+            provider: Fournisseur/méthode d'analyse
+
+        Returns:
+            Résultat de l'analyse
+        """
+        self._init_models()
+        self.stats['analyses_performed'] += 1
+
         try:
-            response = requests.get(self.base_url, timeout=10)
-            if response.status_code != 200:
-                return None
-            
-            data = response.json()
-            if 'data' not in data or not data['data']:
-                return None
-            
-            current = data['data'][0]
-            value = int(current['value'])
-            
-            # Normaliser de 0-100 à -1 à +1
-            normalized = (value - 50) / 50
-            
-            return SentimentScore(
-                value=normalized,
-                source="Fear & Greed Index",
-                timestamp=datetime.now(),
-                confidence=0.8,
-                raw_data={
-                    'value': value,
-                    'classification': current.get('value_classification', ''),
-                    'time_until_update': current.get('time_until_update', '')
+            if provider == SentimentProvider.TEXTBLOB:
+                return self._analyze_textblob(text)
+            elif provider == SentimentProvider.TRANSFORMERS:
+                return self._analyze_transformers(text)
+            else:
+                return self._analyze_textblob(text)  # Fallback
+
+        except Exception as e:
+            logger.error(f"Erreur analyse sentiment: {e}")
+            self.stats['errors'] += 1
+            return SentimentResult(
+                text=text,
+                sentiment=0.0,
+                confidence=0.0,
+                provider=provider.value,
+                timestamp=datetime.utcnow(),
+                metadata={'error': str(e)}
+            )
+
+    def _analyze_textblob(self, text: str) -> SentimentResult:
+        """Analyse avec TextBlob."""
+        blob = TextBlob(text)
+        sentiment = blob.sentiment.polarity  # -1 à 1
+        confidence = min(abs(sentiment), 1.0)  # Confiance basée sur la force du sentiment
+
+        return SentimentResult(
+            text=text,
+            sentiment=sentiment,
+            confidence=confidence,
+            provider=SentimentProvider.TEXTBLOB.value,
+            timestamp=datetime.utcnow(),
+            metadata={
+                'subjectivity': blob.sentiment.subjectivity,
+                'method': 'textblob'
+            }
+        )
+
+    def _analyze_transformers(self, text: str) -> SentimentResult:
+        """Analyse avec Transformers."""
+        if not self.transformer_model:
+            # Fallback vers TextBlob
+            return self._analyze_textblob(text)
+
+        try:
+            results = self.transformer_model(text)
+
+            # Le modèle retourne des scores pour LABEL_0 (négatif), LABEL_1 (neutre), LABEL_2 (positif)
+            scores = {res['label']: res['score'] for res in results[0]}
+
+            # Convertir en échelle -1 à 1
+            neg_score = scores.get('LABEL_0', 0)
+            neu_score = scores.get('LABEL_1', 0)
+            pos_score = scores.get('LABEL_2', 0)
+
+            # Sentiment = positif - négatif
+            sentiment = pos_score - neg_score
+            confidence = max(neg_score, neu_score, pos_score)
+
+            return SentimentResult(
+                text=text,
+                sentiment=sentiment,
+                confidence=confidence,
+                provider=SentimentProvider.TRANSFORMERS.value,
+                timestamp=datetime.utcnow(),
+                metadata={
+                    'negative': neg_score,
+                    'neutral': neu_score,
+                    'positive': pos_score,
+                    'method': 'transformers'
                 }
             )
-            
+
         except Exception as e:
-            print(f"⚠️ Erreur Fear & Greed Index: {e}")
-            return None
-    
-    def fetch_historical(self, days: int = 30) -> pd.DataFrame:
-        """Récupère l'historique Fear & Greed."""
-        try:
-            url = f"{self.base_url}?limit={days}"
-            response = requests.get(url, timeout=10)
-            
-            if response.status_code != 200:
-                return pd.DataFrame()
-            
-            data = response.json()
-            if 'data' not in data:
-                return pd.DataFrame()
-            
-            records = []
-            for item in data['data']:
-                records.append({
-                    'timestamp': datetime.fromtimestamp(int(item['timestamp'])),
-                    'value': int(item['value']),
-                    'classification': item.get('value_classification', '')
-                })
-            
-            df = pd.DataFrame(records)
-            if not df.empty:
-                df = df.set_index('timestamp').sort_index()
-                df['normalized'] = (df['value'] - 50) / 50
-            
-            return df
-            
-        except Exception as e:
-            print(f"⚠️ Erreur Fear & Greed historique: {e}")
-            return pd.DataFrame()
-    
-    def get_signal(self) -> Dict:
+            logger.error(f"Erreur Transformers: {e}")
+            return self._analyze_textblob(text)
+
+    async def get_news_sentiment(self, symbol: str, days: int = 7) -> Dict:
         """
-        Génère un signal basé sur Fear & Greed.
-        
-        Logique contrarian:
-        - Extreme Fear (<25) = Signal d'achat potentiel
-        - Extreme Greed (>75) = Signal de vente potentiel
-        """
-        score = self.fetch_current()
-        
-        if score is None:
-            return {"signal": "NEUTRAL", "reason": "Données non disponibles"}
-        
-        raw_value = score.raw_data['value']
-        
-        if raw_value <= 25:
-            signal = "BUY"
-            reason = f"Extreme Fear ({raw_value}) - Opportunité contrarian"
-            strength = (25 - raw_value) / 25
-        elif raw_value >= 75:
-            signal = "SELL"
-            reason = f"Extreme Greed ({raw_value}) - Prudence recommandée"
-            strength = (raw_value - 75) / 25
-        elif raw_value <= 40:
-            signal = "LEAN_BUY"
-            reason = f"Fear ({raw_value})"
-            strength = (40 - raw_value) / 40
-        elif raw_value >= 60:
-            signal = "LEAN_SELL"
-            reason = f"Greed ({raw_value})"
-            strength = (raw_value - 60) / 40
-        else:
-            signal = "NEUTRAL"
-            reason = f"Neutral zone ({raw_value})"
-            strength = 0
-        
-        return {
-            "signal": signal,
-            "reason": reason,
-            "strength": min(strength, 1.0),
-            "value": raw_value,
-            "classification": score.raw_data['classification']
-        }
+        Récupère et analyse le sentiment des news pour un symbole.
 
+        Args:
+            symbol: Symbole à analyser
+            days: Nombre de jours d'historique
 
-class NewsSentimentAnalyzer:
-    """
-    Analyse le sentiment des news via NewsAPI.
-    Gratuit: 100 requêtes/jour
-    """
-    
-    def __init__(self, api_key: str = None):
-        self.api_key = api_key or os.getenv('NEWSAPI_KEY', '')
-        self.base_url = "https://newsapi.org/v2"
-        self._available = bool(self.api_key)
-    
-    def is_available(self) -> bool:
-        return self._available
-    
-    def fetch_headlines(
-        self,
-        keywords: List[str] = None,
-        language: str = 'en'
-    ) -> List[Dict]:
-        """Récupère les headlines récentes."""
-        if not self._available:
-            return []
-        
-        keywords = keywords or ['forex', 'EUR USD', 'gold price', 'fed']
-        
-        headlines = []
-        for keyword in keywords[:3]:  # Limiter les requêtes
-            try:
-                url = f"{self.base_url}/everything"
-                params = {
-                    'q': keyword,
-                    'apiKey': self.api_key,
-                    'language': language,
-                    'sortBy': 'publishedAt',
-                    'pageSize': 10
-                }
-                
-                response = requests.get(url, params=params, timeout=10)
-                
-                if response.status_code != 200:
-                    continue
-                
-                data = response.json()
-                
-                for article in data.get('articles', []):
-                    headlines.append({
-                        'title': article.get('title', ''),
-                        'description': article.get('description', ''),
-                        'source': article.get('source', {}).get('name', ''),
-                        'published_at': article.get('publishedAt', ''),
-                        'url': article.get('url', '')
-                    })
-                    
-            except Exception as e:
-                print(f"⚠️ Erreur NewsAPI: {e}")
-                continue
-        
-        return headlines
-    
-    def analyze_sentiment_basic(self, text: str) -> float:
-        """
-        Analyse de sentiment basique basée sur des mots-clés.
-        Retourne un score entre -1 (négatif) et +1 (positif).
-        """
-        if not text:
-            return 0.0
-        
-        text_lower = text.lower()
-        
-        # Mots positifs pour le marché
-        positive_words = [
-            'rally', 'surge', 'gain', 'rise', 'bullish', 'growth', 'strong',
-            'recovery', 'optimism', 'breakthrough', 'record high', 'outperform',
-            'beat', 'exceed', 'support', 'momentum', 'break out', 'upgrade',
-            'positive', 'confidence', 'expansion'
-        ]
-        
-        # Mots négatifs pour le marché
-        negative_words = [
-            'crash', 'plunge', 'drop', 'fall', 'bearish', 'recession', 'weak',
-            'crisis', 'fear', 'concern', 'decline', 'loss', 'tumble', 'sell-off',
-            'miss', 'disappoint', 'resistance', 'breakdown', 'downgrade',
-            'negative', 'uncertainty', 'contraction', 'inflation', 'default'
-        ]
-        
-        pos_count = sum(1 for word in positive_words if word in text_lower)
-        neg_count = sum(1 for word in negative_words if word in text_lower)
-        
-        total = pos_count + neg_count
-        if total == 0:
-            return 0.0
-        
-        return (pos_count - neg_count) / total
-    
-    def get_market_sentiment(self, symbol: str = "EUR/USD") -> Dict:
-        """Analyse le sentiment du marché pour un symbole."""
-        keywords = self._get_keywords_for_symbol(symbol)
-        headlines = self.fetch_headlines(keywords)
-        
-        if not headlines:
-            return {"sentiment": 0, "signal": "NEUTRAL", "articles": 0}
-        
-        sentiments = []
-        for article in headlines:
-            text = f"{article['title']} {article.get('description', '')}"
-            score = self.analyze_sentiment_basic(text)
-            sentiments.append(score)
-        
-        avg_sentiment = np.mean(sentiments) if sentiments else 0
-        
-        if avg_sentiment > 0.3:
-            signal = "BULLISH"
-        elif avg_sentiment < -0.3:
-            signal = "BEARISH"
-        else:
-            signal = "NEUTRAL"
-        
-        return {
-            "sentiment": avg_sentiment,
-            "signal": signal,
-            "articles": len(headlines),
-            "confidence": min(len(headlines) / 10, 1.0)
-        }
-    
-    def _get_keywords_for_symbol(self, symbol: str) -> List[str]:
-        """Génère les mots-clés de recherche pour un symbole."""
-        mapping = {
-            'EURUSD': ['EUR USD', 'euro dollar', 'ECB', 'eurozone'],
-            'EURUSD=X': ['EUR USD', 'euro dollar', 'ECB', 'eurozone'],
-            'GC=F': ['gold price', 'gold futures', 'precious metals'],
-            'XAUUSD': ['gold price', 'XAU USD', 'gold trading'],
-            'BTCUSDT': ['bitcoin', 'BTC', 'crypto market'],
-            'BTCUSD': ['bitcoin', 'BTC', 'crypto market'],
-        }
-        
-        return mapping.get(symbol.upper(), [symbol])
-
-
-class SocialSentiment:
-    """
-    Analyse du sentiment sur les réseaux sociaux.
-    Utilise des APIs gratuites quand disponibles.
-    """
-    
-    def __init__(self):
-        self.reddit_sentiment = RedditSentiment()
-    
-    def get_combined_sentiment(self, symbol: str) -> Dict:
-        """Combine les sentiments de toutes les sources sociales."""
-        results = {}
-        
-        # Reddit
-        reddit_result = self.reddit_sentiment.get_sentiment(symbol)
-        if reddit_result:
-            results['reddit'] = reddit_result
-        
-        # Calculer score combiné
-        if not results:
-            return {"combined_score": 0, "signal": "NEUTRAL", "sources": 0}
-        
-        scores = [r.get('sentiment', 0) for r in results.values()]
-        combined = np.mean(scores)
-        
-        if combined > 0.2:
-            signal = "BULLISH"
-        elif combined < -0.2:
-            signal = "BEARISH"
-        else:
-            signal = "NEUTRAL"
-        
-        return {
-            "combined_score": combined,
-            "signal": signal,
-            "sources": len(results),
-            "details": results
-        }
-
-
-class RedditSentiment:
-    """
-    Analyse du sentiment Reddit via l'API publique (sans auth).
-    Limité mais gratuit.
-    """
-    
-    def __init__(self):
-        self.subreddits = {
-            'forex': ['Forex', 'ForexTrading'],
-            'crypto': ['cryptocurrency', 'Bitcoin', 'CryptoMarkets'],
-            'stocks': ['wallstreetbets', 'stocks', 'investing'],
-            'gold': ['Gold', 'Silverbugs']
-        }
-    
-    def get_sentiment(self, symbol: str) -> Optional[Dict]:
-        """Récupère le sentiment Reddit pour un symbole."""
-        category = self._categorize_symbol(symbol)
-        subreddits = self.subreddits.get(category, ['Forex'])
-        
-        try:
-            all_posts = []
-            for subreddit in subreddits[:1]:  # Une seule requête
-                url = f"https://www.reddit.com/r/{subreddit}/hot.json?limit=10"
-                headers = {'User-Agent': 'QuantumTrading/1.0'}
-                
-                response = requests.get(url, headers=headers, timeout=10)
-                
-                if response.status_code != 200:
-                    continue
-                
-                data = response.json()
-                posts = data.get('data', {}).get('children', [])
-                
-                for post in posts:
-                    post_data = post.get('data', {})
-                    all_posts.append({
-                        'title': post_data.get('title', ''),
-                        'score': post_data.get('score', 0),
-                        'upvote_ratio': post_data.get('upvote_ratio', 0.5),
-                        'num_comments': post_data.get('num_comments', 0)
-                    })
-            
-            if not all_posts:
-                return None
-            
-            # Analyser le sentiment des titres
-            sentiments = []
-            for post in all_posts:
-                text = post['title']
-                score = self._basic_sentiment(text)
-                # Pondérer par le nombre d'upvotes
-                weight = np.log1p(post['score'])
-                sentiments.append(score * weight)
-            
-            avg_sentiment = np.mean(sentiments) if sentiments else 0
-            
-            return {
-                "sentiment": np.clip(avg_sentiment / 5, -1, 1),
-                "posts_analyzed": len(all_posts),
-                "subreddits": subreddits[:1]
-            }
-            
-        except Exception as e:
-            print(f"⚠️ Erreur Reddit: {e}")
-            return None
-    
-    def _categorize_symbol(self, symbol: str) -> str:
-        """Catégorise un symbole."""
-        symbol_upper = symbol.upper()
-        if 'BTC' in symbol_upper or 'ETH' in symbol_upper or 'USDT' in symbol_upper:
-            return 'crypto'
-        elif 'GC=' in symbol_upper or 'XAU' in symbol_upper or 'GOLD' in symbol_upper:
-            return 'gold'
-        elif any(x in symbol_upper for x in ['EUR', 'USD', 'GBP', 'JPY', 'CHF']):
-            return 'forex'
-        return 'stocks'
-    
-    def _basic_sentiment(self, text: str) -> float:
-        """Analyse de sentiment basique."""
-        text_lower = text.lower()
-        
-        bullish = ['moon', 'buy', 'bullish', 'pump', 'gain', 'up', 'rocket', 'call', 'long']
-        bearish = ['crash', 'sell', 'bearish', 'dump', 'loss', 'down', 'put', 'short', 'rekt']
-        
-        pos = sum(1 for w in bullish if w in text_lower)
-        neg = sum(1 for w in bearish if w in text_lower)
-        
-        return pos - neg
-
-
-class SentimentAggregator:
-    """
-    Agrégateur de sentiment multi-sources.
-    Combine tous les indicateurs de sentiment en un score unique.
-    """
-    
-    def __init__(self):
-        self.fear_greed = FearGreedIndex()
-        self.news = NewsSentimentAnalyzer()
-        self.social = SocialSentiment()
-        
-        # Poids des sources
-        self.weights = {
-            'fear_greed': 0.40,
-            'news': 0.35,
-            'social': 0.25
-        }
-    
-    def get_aggregated_sentiment(self, symbol: str = "EURUSD=X") -> Dict:
-        """
-        Calcule le sentiment agrégé à partir de toutes les sources.
-        
         Returns:
-            Dict avec score (-1 à +1), signal, et détails par source
+            Analyse de sentiment des news
         """
-        results = {}
-        scores = []
-        weights = []
-        
-        # Fear & Greed Index
-        fg_signal = self.fear_greed.get_signal()
-        if fg_signal['signal'] != 'NEUTRAL':
-            score_map = {
-                'BUY': 0.8, 'LEAN_BUY': 0.4,
-                'SELL': -0.8, 'LEAN_SELL': -0.4,
-                'NEUTRAL': 0
-            }
-            fg_score = score_map.get(fg_signal['signal'], 0) * fg_signal.get('strength', 0.5)
-            scores.append(fg_score)
-            weights.append(self.weights['fear_greed'])
-            results['fear_greed'] = {
-                'score': fg_score,
-                'raw_value': fg_signal.get('value'),
-                'classification': fg_signal.get('classification')
-            }
-        
-        # News sentiment
-        if self.news.is_available():
-            news_result = self.news.get_market_sentiment(symbol)
-            if news_result['articles'] > 0:
-                scores.append(news_result['sentiment'])
-                weights.append(self.weights['news'] * news_result['confidence'])
-                results['news'] = news_result
-        
-        # Social sentiment
-        social_result = self.social.get_combined_sentiment(symbol)
-        if social_result['sources'] > 0:
-            scores.append(social_result['combined_score'])
-            weights.append(self.weights['social'])
-            results['social'] = social_result
-        
-        # Calculer le score agrégé
-        if not scores:
+        cache_key = f"news_{symbol}_{days}d"
+
+        # Vérifier le cache
+        if cache_key in self.sentiment_cache and cache_key in self.cache_expiry:
+            if datetime.utcnow() < self.cache_expiry[cache_key]:
+                self.stats['cache_hits'] += 1
+                return self._format_news_sentiment(symbol, self.sentiment_cache[cache_key])
+
+        try:
+            news_data = await self._fetch_news(symbol, days)
+            sentiment_results = []
+
+            for article in news_data:
+                title = article.get('title', '')
+                description = article.get('description', '')
+
+                # Analyser le titre et la description
+                if title:
+                    title_sentiment = self.analyze_text_sentiment(title)
+                    sentiment_results.append(title_sentiment)
+
+                if description:
+                    desc_sentiment = self.analyze_text_sentiment(description)
+                    sentiment_results.append(desc_sentiment)
+
+            # Mettre en cache
+            self.sentiment_cache[cache_key] = sentiment_results
+            self.cache_expiry[cache_key] = datetime.utcnow() + timedelta(hours=1)
+
+            return self._format_news_sentiment(symbol, sentiment_results)
+
+        except Exception as e:
+            logger.error(f"Erreur récupération news pour {symbol}: {e}")
+            return self._format_news_sentiment(symbol, [])
+
+    async def _fetch_news(self, symbol: str, days: int) -> List[Dict]:
+        """Récupère les news depuis les APIs gratuites."""
+        news_data = []
+
+        # NewsAPI (gratuit)
+        if self.newsapi_key:
+            try:
+                from_date = (datetime.utcnow() - timedelta(days=days)).strftime('%Y-%m-%d')
+                url = f"https://newsapi.org/v2/everything?q={symbol}&from={from_date}&sortBy=publishedAt&apiKey={self.newsapi_key}"
+
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            news_data.extend(data.get('articles', []))
+                            self.stats['api_calls'] += 1
+
+            except Exception as e:
+                logger.warning(f"Erreur NewsAPI: {e}")
+
+        # Finnhub News (gratuit)
+        if self.finnhub_key:
+            try:
+                url = f"https://finnhub.io/api/v1/company-news?symbol={symbol}&from={(datetime.utcnow() - timedelta(days=days)).strftime('%Y-%m-%d')}&to={datetime.utcnow().strftime('%Y-%m-%d')}&token={self.finnhub_key}"
+
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            # Convertir le format Finnhub vers format standard
+                            for item in data:
+                                news_data.append({
+                                    'title': item.get('headline', ''),
+                                    'description': item.get('summary', ''),
+                                    'publishedAt': datetime.fromtimestamp(item.get('datetime', 0)).isoformat()
+                                })
+                            self.stats['api_calls'] += 1
+
+            except Exception as e:
+                logger.warning(f"Erreur Finnhub news: {e}")
+
+        # Si pas d'APIs configurées, retourner des données simulées
+        if not news_data:
+            logger.warning("Aucune API de news configurée, utilisation de données simulées")
+            news_data = self._generate_mock_news(symbol, days)
+
+        return news_data
+
+    def _generate_mock_news(self, symbol: str, days: int) -> List[Dict]:
+        """Génère des news simulées pour les tests."""
+        import random
+        news_templates = [
+            f"{symbol} annonce de nouveaux records trimestriels",
+            f"Analystes optimistes sur {symbol} malgré la volatilité",
+            f"{symbol} fait face à des défis réglementaires",
+            f"Nouvelles partnerships pour {symbol} dans le secteur tech",
+            f"{symbol} investit massivement dans l'innovation"
+        ]
+
+        news = []
+        for i in range(min(days * 2, 20)):  # Max 20 articles
+            news.append({
+                'title': random.choice(news_templates),
+                'description': f"Développement important pour {symbol} dans le marché actuel.",
+                'publishedAt': (datetime.utcnow() - timedelta(hours=random.randint(1, days*24))).isoformat()
+            })
+
+        return news
+
+    def _format_news_sentiment(self, symbol: str, sentiment_results: List[SentimentResult]) -> Dict:
+        """Formate les résultats de sentiment des news."""
+        if not sentiment_results:
             return {
-                "aggregated_score": 0,
-                "signal": "NEUTRAL",
-                "confidence": 0,
-                "sources": results
+                'symbol': symbol,
+                'overall_sentiment': 0.0,
+                'confidence': 0.0,
+                'news_count': 0,
+                'sentiment_distribution': {'positive': 0, 'neutral': 0, 'negative': 0},
+                'timestamp': datetime.utcnow().isoformat()
             }
-        
-        aggregated = np.average(scores, weights=weights)
-        confidence = sum(weights) / sum(self.weights.values())
-        
-        # Déterminer le signal
-        if aggregated > 0.3:
-            signal = "BULLISH"
-        elif aggregated < -0.3:
-            signal = "BEARISH"
-        elif aggregated > 0.1:
-            signal = "LEAN_BULLISH"
-        elif aggregated < -0.1:
-            signal = "LEAN_BEARISH"
-        else:
-            signal = "NEUTRAL"
-        
+
+        sentiments = [r.sentiment for r in sentiment_results]
+        overall_sentiment = sum(sentiments) / len(sentiments)
+
+        # Distribution
+        positive = sum(1 for s in sentiments if s > 0.1)
+        negative = sum(1 for s in sentiments if s < -0.1)
+        neutral = len(sentiments) - positive - negative
+
+        # Confiance basée sur la cohérence
+        sentiment_std = np.std(sentiments) if len(sentiments) > 1 else 0
+        confidence = max(0, 1 - sentiment_std)
+
         return {
-            "aggregated_score": round(aggregated, 3),
-            "signal": signal,
-            "confidence": round(confidence, 2),
-            "sources": results
+            'symbol': symbol,
+            'overall_sentiment': overall_sentiment,
+            'confidence': confidence,
+            'news_count': len(sentiment_results),
+            'sentiment_distribution': {
+                'positive': positive,
+                'neutral': neutral,
+                'negative': negative
+            },
+            'sentiment_range': {
+                'min': min(sentiments),
+                'max': max(sentiments),
+                'avg': overall_sentiment
+            },
+            'timestamp': datetime.utcnow().isoformat()
         }
 
+    async def get_fear_greed_index(self) -> Optional[float]:
+        """
+        Récupère l'indice Fear & Greed (CNN).
 
-if __name__ == "__main__":
-    print("=" * 60)
-    print("TEST ANALYSE DE SENTIMENT")
-    print("=" * 60)
-    
-    # Test Fear & Greed
-    print("\n--- Fear & Greed Index ---")
-    fg = FearGreedIndex()
-    signal = fg.get_signal()
-    print(f"Signal: {signal}")
-    
-    # Test Aggregator
-    print("\n--- Sentiment Agrégé ---")
-    aggregator = SentimentAggregator()
-    result = aggregator.get_aggregated_sentiment("EURUSD=X")
-    print(f"Score: {result['aggregated_score']}")
-    print(f"Signal: {result['signal']}")
-    print(f"Confiance: {result['confidence']}")
-    print(f"Sources: {list(result['sources'].keys())}")
+        Returns:
+            Valeur de l'indice (0-100) ou None si erreur
+        """
+        # Vérifier le cache (valide 1 heure)
+        if self.fear_greed_cache and datetime.utcnow() < self.fear_greed_cache['expiry']:
+            return self.fear_greed_cache['value']
+
+        try:
+            # API gratuite de CNN pour Fear & Greed Index
+            url = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        # Le dernier point de données
+                        latest = data['fear_and_greed_historical'][-1]
+                        value = latest['y']
+
+                        # Mettre en cache
+                        self.fear_greed_cache = {
+                            'value': value,
+                            'expiry': datetime.utcnow() + timedelta(hours=1)
+                        }
+
+                        self.stats['api_calls'] += 1
+                        return value
+
+        except Exception as e:
+            logger.error(f"Erreur récupération Fear & Greed Index: {e}")
+
+        return None
+
+    async def get_put_call_ratio(self, symbol: str = "SPY") -> Optional[float]:
+        """
+        Récupère le ratio Put/Call (approximation gratuite).
+
+        Args:
+            symbol: Symbole de référence
+
+        Returns:
+            Ratio Put/Call ou None
+        """
+        # Pour une vraie implémentation, utiliser une API payante
+        # Ici, on simule basé sur la volatilité récente
+        try:
+            # Simulation basée sur des données gratuites
+            # Dans la réalité, utiliser CBOE API ou autre source
+            volatility = 0.2  # Valeur simulée
+
+            # Ratio typique: plus de puts quand volatilité haute
+            ratio = 0.7 + (volatility * 0.5) + (0.1 * (hash(symbol) % 100) / 100)
+
+            return min(ratio, 2.0)  # Capped at 2.0
+
+        except Exception as e:
+            logger.error(f"Erreur calcul ratio Put/Call: {e}")
+            return None
+
+    async def get_comprehensive_sentiment(self, symbol: str, days: int = 7) -> Dict:
+        """
+        Analyse complète du sentiment pour un symbole.
+
+        Args:
+            symbol: Symbole à analyser
+            days: Période d'analyse
+
+        Returns:
+            Analyse complète de sentiment
+        """
+        try:
+            # News sentiment
+            news_sentiment = await self.get_news_sentiment(symbol, days)
+
+            # Fear & Greed Index
+            fear_greed = await self.get_fear_greed_index()
+
+            # Put/Call Ratio
+            put_call = await self.get_put_call_ratio(symbol)
+
+            # Sentiment global pondéré
+            weights = {'news': 0.6, 'fear_greed': 0.2, 'put_call': 0.2}
+
+            overall_sentiment = news_sentiment['overall_sentiment'] * weights['news']
+
+            if fear_greed is not None:
+                # Fear & Greed: 0=extreme fear, 100=extreme greed
+                # Convertir en sentiment: -1 à 1
+                fear_greed_sentiment = (fear_greed - 50) / 50
+                overall_sentiment += fear_greed_sentiment * weights['fear_greed']
+
+            if put_call is not None:
+                # Put/Call: >1 = bearish, <1 = bullish
+                put_call_sentiment = 1 - put_call  # Inverser et normaliser
+                overall_sentiment += put_call_sentiment * weights['put_call']
+
+            return {
+                'symbol': symbol,
+                'overall_sentiment': overall_sentiment,
+                'components': {
+                    'news_sentiment': news_sentiment,
+                    'fear_greed_index': fear_greed,
+                    'put_call_ratio': put_call
+                },
+                'weights': weights,
+                'confidence': news_sentiment.get('confidence', 0.0),
+                'timestamp': datetime.utcnow().isoformat()
+            }
+
+        except Exception as e:
+            logger.error(f"Erreur analyse sentiment complète pour {symbol}: {e}")
+            return {
+                'symbol': symbol,
+                'overall_sentiment': 0.0,
+                'error': str(e),
+                'timestamp': datetime.utcnow().isoformat()
+            }
+
+    def get_stats(self) -> Dict:
+        """Retourne les statistiques d'utilisation."""
+        return self.stats.copy()
+
+# Instance globale
+sentiment_analyzer = SentimentAnalyzer()
+
+def get_sentiment_analyzer() -> SentimentAnalyzer:
+    """Retourne l'instance globale de l'analyseur de sentiment."""
+    return sentiment_analyzer

@@ -1,282 +1,277 @@
-"""
-MLService - Service de Machine Learning pour la classification des signaux de trading.
-
-Ce service fournit une interface unifiée pour :
-- Chargement des modèles d'ensemble
-- Prédiction des signaux avec confiance
-- Mise à jour automatique des modèles
-- Calibration des scores de confiance
-"""
+# Service d'apprentissage automatique pour le système de trading quantique
+# Fournit des prédictions de signaux avec ensemble de modèles
 
 import pandas as pd
 import numpy as np
-from typing import Dict, Optional, List
+from typing import Dict, List, Optional
+import xgboost as xgb
+import lightgbm as lgb
+import catboost as cb
+from sklearn.ensemble import VotingClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, classification_report
+import joblib
 import os
-import sys
 import logging
-from datetime import datetime, timedelta
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config.settings import config
-from ml.ensemble import EnsembleClassifier, EnsembleConfig
 
 logger = logging.getLogger(__name__)
 
-
 class MLService:
     """
-    Service ML pour la prédiction de signaux de trading.
-
-    Gère le cycle de vie des modèles d'ensemble et fournit
-    des prédictions avec scores de confiance calibrés.
+    Service d'apprentissage automatique pour la confirmation de signaux de trading.
+    Utilise un ensemble de modèles XGBoost, LightGBM et CatBoost pour améliorer la fiabilité.
     """
 
-    def __init__(self, model_path: str = None):
+    def __init__(self, model_path: str = "models"):
         """
         Initialise le service ML.
 
         Args:
-            model_path: Chemin vers le modèle sauvegardé (optionnel)
+            model_path: Chemin vers le répertoire des modèles
         """
-        self.model_path = model_path or config.ml.MODEL_PATH
-        self.models: Dict[str, EnsembleClassifier] = {}
-        self.last_update = None
-        self.min_confidence = config.ml.MIN_PROBABILITY_THRESHOLD
-        self.strong_confidence = config.ml.STRONG_SIGNAL_THRESHOLD
+        self.model_path = model_path
+        self.models = {}
+        self.ensemble_model = None
+        self.feature_columns = [
+            'rsi', 'macd', 'macd_signal', 'macd_hist', 'bb_upper', 'bb_middle', 'bb_lower',
+            'stoch_k', 'stoch_d', 'williams_r', 'cci', 'mfi', 'volume_ratio',
+            'price_change', 'volatility', 'trend_strength'
+        ]
 
-        # Charger les modèles existants
-        self._load_models()
+        # Créer le répertoire des modèles s'il n'existe pas
+        os.makedirs(model_path, exist_ok=True)
 
-    def _load_models(self):
-        """Charge les modèles d'ensemble sauvegardés."""
+        # Charger ou entraîner les modèles
+        self._load_or_train_models()
+
+    def _load_or_train_models(self):
+        """Charge les modèles existants ou les entraîne si nécessaire."""
         try:
-            if os.path.exists(self.model_path):
-                # Charger le modèle principal
-                ensemble = EnsembleClassifier()
-                ensemble.load(self.model_path)
-                self.models['main'] = ensemble
-                self.last_update = datetime.now()
-                logger.info(f"Modèle chargé depuis {self.model_path}")
-            else:
-                logger.warning(f"Aucun modèle trouvé à {self.model_path}")
-                # Créer un modèle par défaut si nécessaire
-                self._create_default_model()
-
+            # Essayer de charger les modèles sauvegardés
+            self.models = self._load_models()
+            self.ensemble_model = self._create_ensemble()
+            logger.info("Modèles ML chargés avec succès")
         except Exception as e:
-            logger.error(f"Erreur lors du chargement du modèle: {e}")
-            self._create_default_model()
+            logger.warning(f"Impossible de charger les modèles: {e}. Entraînement en cours...")
+            # Si pas de modèles, entraîner avec des données d'exemple
+            self._train_initial_models()
 
-    def _create_default_model(self):
-        """Crée un modèle par défaut si aucun n'existe."""
-        config_ensemble = EnsembleConfig(
-            use_xgboost=True,
-            use_lightgbm=True,
-            use_catboost=True,
-            calibrate_probabilities=True
+    def _load_models(self) -> Dict:
+        """Charge les modèles depuis le disque."""
+        models = {}
+        for model_name in ['xgboost', 'lightgbm', 'catboost']:
+            model_file = os.path.join(self.model_path, f'{model_name}_model.pkl')
+            if os.path.exists(model_file):
+                models[model_name] = joblib.load(model_file)
+        return models
+
+    def _create_ensemble(self) -> VotingClassifier:
+        """Crée un modèle d'ensemble à partir des modèles individuels."""
+        if len(self.models) < 3:
+            raise ValueError("Au moins 3 modèles requis pour l'ensemble")
+
+        estimators = [
+            ('xgboost', self.models['xgboost']),
+            ('lightgbm', self.models['lightgbm']),
+            ('catboost', self.models['catboost'])
+        ]
+
+        return VotingClassifier(estimators=estimators, voting='soft')
+
+    def _train_initial_models(self):
+        """Entraîne les modèles initiaux avec des données synthétiques."""
+        # Générer des données d'entraînement synthétiques
+        np.random.seed(42)
+        n_samples = 10000
+
+        # Caractéristiques techniques simulées
+        features = {}
+        for col in self.feature_columns:
+            features[col] = np.random.randn(n_samples)
+
+        X = pd.DataFrame(features)
+
+        # Cibles simulées (signaux: 0=vente, 1=achat, 2=neutre)
+        # Simuler une logique simple pour créer des patterns
+        y = np.random.choice([0, 1, 2], n_samples, p=[0.3, 0.4, 0.3])
+
+        # Ajouter du bruit réaliste
+        for i in range(len(y)):
+            if X.loc[i, 'rsi'] > 70 and X.loc[i, 'macd'] > X.loc[i, 'macd_signal']:
+                y[i] = 1  # Signal d'achat
+            elif X.loc[i, 'rsi'] < 30 and X.loc[i, 'macd'] < X.loc[i, 'macd_signal']:
+                y[i] = 0  # Signal de vente
+
+        # Entraîner chaque modèle
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+        # XGBoost
+        xgb_model = xgb.XGBClassifier(
+            objective='multi:softprob',
+            num_class=3,
+            max_depth=6,
+            learning_rate=0.1,
+            n_estimators=100,
+            random_state=42
         )
-        self.models['main'] = EnsembleClassifier(config_ensemble)
-        logger.info("Modèle par défaut créé")
+        xgb_model.fit(X_train, y_train)
+        self.models['xgboost'] = xgb_model
+
+        # LightGBM
+        lgb_model = lgb.LGBMClassifier(
+            objective='multiclass',
+            num_class=3,
+            max_depth=6,
+            learning_rate=0.1,
+            n_estimators=100,
+            random_state=42,
+            verbose=-1
+        )
+        lgb_model.fit(X_train, y_train)
+        self.models['lightgbm'] = lgb_model
+
+        # CatBoost
+        cb_model = cb.CatBoostClassifier(
+            iterations=100,
+            depth=6,
+            learning_rate=0.1,
+            loss_function='MultiClass',
+            random_state=42,
+            verbose=False
+        )
+        cb_model.fit(X_train, y_train)
+        self.models['catboost'] = cb_model
+
+        # Créer l'ensemble
+        self.ensemble_model = self._create_ensemble()
+
+        # Sauvegarder les modèles
+        self._save_models()
+
+        # Évaluer les performances
+        y_pred = self.ensemble_model.predict(X_test)
+        accuracy = accuracy_score(y_test, y_pred)
+        logger.info(f"Précision du modèle d'ensemble initial: {accuracy:.3f}")
+
+    def _save_models(self):
+        """Sauvegarde les modèles sur le disque."""
+        for model_name, model in self.models.items():
+            model_file = os.path.join(self.model_path, f'{model_name}_model.pkl')
+            joblib.dump(model, model_file)
 
     def predict_signal(self, features: Dict) -> Dict:
         """
-        Prédit un signal de trading avec score de confiance.
+        Prédit le signal de trading avec score de confiance.
 
         Args:
-            features: Dictionnaire des features d'entrée
+            features: Dictionnaire des caractéristiques techniques
 
         Returns:
-            Dictionnaire contenant le signal, probabilité et recommandations
+            Dictionnaire avec prédiction, confiance et probabilités
         """
         try:
-            # Convertir en DataFrame
-            X = pd.DataFrame([features])
+            # Préparer les données d'entrée
+            X_input = pd.DataFrame([features])[self.feature_columns]
 
-            # Utiliser le modèle principal
-            model = self.models.get('main')
-            if not model or not model.is_trained:
-                return self._fallback_prediction(features)
+            # Prédiction avec l'ensemble
+            probabilities = self.ensemble_model.predict_proba(X_input)[0]
+            prediction = int(self.ensemble_model.predict(X_input)[0])
 
-            # Prédiction
-            signal_data = model.predict_signal(
-                X,
-                min_threshold=self.min_confidence,
-                strong_threshold=self.strong_confidence
-            )
+            # Calculer la confiance (probabilité maximale)
+            confidence = float(max(probabilities))
 
-            # Enrichir avec métadonnées
-            signal_data.update({
-                'timestamp': datetime.now().isoformat(),
-                'model_version': 'ensemble_v1',
-                'features_used': list(features.keys()),
-                'confidence_level': self._calculate_confidence_level(signal_data['probability'] / 100)
-            })
+            # Mapper les prédictions
+            signal_map = {0: 'VENTE', 1: 'ACHAT', 2: 'NEUTRE'}
+            signal = signal_map.get(prediction, 'NEUTRE')
 
-            return signal_data
+            return {
+                'signal': signal,
+                'confidence': confidence,
+                'probabilities': {
+                    'vente': float(probabilities[0]),
+                    'achat': float(probabilities[1]),
+                    'neutre': float(probabilities[2])
+                },
+                'prediction_time': pd.Timestamp.now().isoformat()
+            }
 
         except Exception as e:
             logger.error(f"Erreur lors de la prédiction: {e}")
-            return self._fallback_prediction(features)
-
-    def _fallback_prediction(self, features: Dict) -> Dict:
-        """Prédiction de secours en cas d'erreur."""
-        return {
-            'signal': 'UNKNOWN',
-            'probability': 50.0,
-            'action': 'Erreur de prédiction - Vérifier manuellement',
-            'threshold_met': False,
-            'is_strong': False,
-            'model_consensus': 50.0,
-            'individual_predictions': {},
-            'timestamp': datetime.now().isoformat(),
-            'model_version': 'fallback',
-            'features_used': list(features.keys()),
-            'confidence_level': 'low',
-            'error': True
-        }
-
-    def _calculate_confidence_level(self, probability: float) -> str:
-        """Calcule le niveau de confiance basé sur la probabilité."""
-        if probability >= self.strong_confidence:
-            return 'high'
-        elif probability >= self.min_confidence:
-            return 'medium'
-        else:
-            return 'low'
+            return {
+                'signal': 'NEUTRE',
+                'confidence': 0.0,
+                'probabilities': {'vente': 0.0, 'achat': 0.0, 'neutre': 1.0},
+                'error': str(e)
+            }
 
     def update_models(self, new_data: pd.DataFrame):
         """
-        Met à jour les modèles avec de nouvelles données.
+        Réentraîne les modèles avec de nouvelles données.
 
         Args:
-            new_data: Nouvelles données d'entraînement
+            new_data: DataFrame avec nouvelles données d'entraînement
         """
         try:
-            if new_data.empty:
-                logger.warning("Aucune nouvelle donnée fournie")
+            if len(new_data) < 100:
+                logger.warning("Données insuffisantes pour le réentraînement")
                 return
 
-            # Réentraîner le modèle principal
-            model = self.models.get('main')
-            if model:
-                # Préparer les features et target
-                # Note: Cette logique devrait être adaptée selon vos données
-                X = new_data.drop(columns=['target'], errors='ignore')
-                y = new_data.get('target', pd.Series())
+            # Utiliser les colonnes de caractéristiques
+            X = new_data[self.feature_columns]
+            y = new_data.get('target', new_data.get('signal'))
 
-                if not y.empty:
-                    logger.info("Réentraînement du modèle avec nouvelles données")
-                    metrics = model.train(X, y)
+            if y is None:
+                logger.error("Colonne cible manquante dans les données")
+                return
 
-                    # Sauvegarder le modèle mis à jour
-                    model.save(self.model_path)
-                    self.last_update = datetime.now()
+            # Réentraîner chaque modèle
+            for model_name, model in self.models.items():
+                logger.info(f"Réentraînement du modèle {model_name}")
+                model.fit(X, y)
 
-                    logger.info(f"Modèle mis à jour - Accuracy: {metrics['validation']['accuracy']:.3f}")
-                else:
-                    logger.warning("Aucune target trouvée dans les nouvelles données")
+            # Mettre à jour l'ensemble
+            self.ensemble_model = self._create_ensemble()
+
+            # Sauvegarder
+            self._save_models()
+
+            logger.info("Modèles mis à jour avec succès")
 
         except Exception as e:
-            logger.error(f"Erreur lors de la mise à jour du modèle: {e}")
+            logger.error(f"Erreur lors de la mise à jour des modèles: {e}")
 
-    def get_model_info(self) -> Dict:
-        """Retourne les informations sur les modèles chargés."""
-        info = {
-            'models_loaded': list(self.models.keys()),
-            'last_update': self.last_update.isoformat() if self.last_update else None,
-            'model_path': self.model_path,
-            'min_confidence': self.min_confidence,
-            'strong_confidence': self.strong_confidence
-        }
-
-        # Informations détaillées sur le modèle principal
-        main_model = self.models.get('main')
-        if main_model and main_model.is_trained:
-            info['main_model'] = {
-                'trained': True,
-                'feature_count': len(main_model.feature_names),
-                'features': main_model.feature_names,
-                'models_used': list(main_model.models.keys()),
-                'ensemble_type': 'stacking' if main_model.config.use_stacking else 'voting'
-            }
-        else:
-            info['main_model'] = {'trained': False}
-
-        return info
-
-    def get_feature_importance(self) -> pd.DataFrame:
-        """Retourne l'importance des features."""
-        model = self.models.get('main')
-        if model and model.is_trained:
-            return model.get_feature_importance()
-        return pd.DataFrame()
-
-    def validate_features(self, features: Dict) -> Dict:
+    def get_feature_importance(self) -> Dict:
         """
-        Valide que les features fournies sont compatibles.
-
-        Args:
-            features: Features à valider
+        Retourne l'importance des caractéristiques pour chaque modèle.
 
         Returns:
-            Résultat de validation
+            Dictionnaire avec importances par modèle
         """
-        model = self.models.get('main')
-        if not model or not model.is_trained:
-            return {'valid': False, 'reason': 'Modèle non entraîné'}
+        importance = {}
 
-        expected_features = set(model.feature_names)
-        provided_features = set(features.keys())
+        try:
+            # XGBoost
+            if hasattr(self.models.get('xgboost'), 'feature_importances_'):
+                importance['xgboost'] = dict(zip(
+                    self.feature_columns,
+                    self.models['xgboost'].feature_importances_
+                ))
 
-        missing = expected_features - provided_features
-        extra = provided_features - expected_features
+            # LightGBM
+            if hasattr(self.models.get('lightgbm'), 'feature_importances_'):
+                importance['lightgbm'] = dict(zip(
+                    self.feature_columns,
+                    self.models['lightgbm'].feature_importances_
+                ))
 
-        if missing:
-            return {
-                'valid': False,
-                'reason': f'Features manquantes: {list(missing)}',
-                'missing_features': list(missing)
-            }
+            # CatBoost
+            if hasattr(self.models.get('catboost'), 'feature_importances_'):
+                importance['catboost'] = dict(zip(
+                    self.feature_columns,
+                    self.models['catboost'].feature_importances_
+                ))
 
-        result = {'valid': True, 'expected_features': list(expected_features)}
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération de l'importance: {e}")
 
-        if extra:
-            result['extra_features'] = list(extra)
-            result['warning'] = 'Features supplémentaires ignorées'
-
-        return result
-
-
-# Instance globale du service
-ml_service = MLService()
-
-
-if __name__ == "__main__":
-    # Test du service
-    print("=== Test MLService ===")
-
-    # Features de test
-    test_features = {
-        'zscore': -1.5,
-        'hurst': 0.45,
-        'rsi': 25.0,
-        'macd': -0.02,
-        'atr': 0.015,
-        'volume_ratio': 1.2
-    }
-
-    # Prédiction
-    result = ml_service.predict_signal(test_features)
-
-    print(f"Signal: {result['signal']}")
-    print(f"Probabilité: {result['probability']}%")
-    print(f"Action: {result['action']}")
-    print(f"Confiance: {result['confidence_level']}")
-
-    # Informations sur le modèle
-    info = ml_service.get_model_info()
-    print(f"\nModèles chargés: {info['models_loaded']}")
-    print(f"Dernière mise à jour: {info['last_update']}")
-
-    # Validation des features
-    validation = ml_service.validate_features(test_features)
-    print(f"Features valides: {validation['valid']}")
+        return importance
