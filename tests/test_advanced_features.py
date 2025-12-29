@@ -12,7 +12,7 @@ from ml.service import MLService
 from analysis.intermarket import InterMarketAnalyzer
 from data.realtime import RealTimeDataManager, DataProvider
 from data.sentiment import SentimentAnalyzer, SentimentProvider
-from risk.manager import RiskEngine, VaRMethod
+from risk.manager import RiskManager, VaRMethod
 from db.cache import RedisCache
 from api.main import app
 from fastapi.testclient import TestClient
@@ -150,21 +150,21 @@ class TestSentimentAnalyzer:
         assert neg_result.sentiment < 0
         assert 0 <= pos_result.confidence <= 1
 
-class TestRiskEngine:
-    """Tests pour le moteur de risque."""
+class TestRiskManager:
+    """Tests pour le gestionnaire de risque."""
 
     def setup_method(self):
         """Configuration avant chaque test."""
-        self.engine = RiskEngine()
+        self.manager = RiskManager()
 
     def test_var_calculation(self):
         """Test le calcul de VaR."""
         portfolio = {'AAPL': 0.6, 'MSFT': 0.4}
 
         # Données synthétiques
-        historical_data = self.engine._generate_synthetic_data(portfolio.keys())
+        historical_data = self.manager._generate_synthetic_data(portfolio.keys())
 
-        result = self.engine.calculate_var(portfolio, 0.95, VaRMethod.HISTORICAL, historical_data)
+        result = self.manager.calculate_var(portfolio, 0.95, VaRMethod.HISTORICAL, historical_data)
 
         assert hasattr(result, 'var_95')
         assert hasattr(result, 'volatility')
@@ -176,7 +176,7 @@ class TestRiskEngine:
         """Test les tests de stress."""
         portfolio = {'AAPL': 0.5, 'MSFT': 0.5}
 
-        result = self.engine.stress_test(portfolio, 'covid_19')
+        result = self.manager.stress_test(portfolio, 'covid_19')
 
         assert hasattr(result, 'scenario_name')
         assert hasattr(result, 'portfolio_loss')
@@ -188,9 +188,9 @@ class TestRiskEngine:
         assets = ['AAPL', 'MSFT', 'GOOGL']
         constraints = {}
 
-        historical_data = self.engine._generate_synthetic_data(assets)
+        historical_data = self.manager._generate_synthetic_data(assets)
 
-        result = self.engine.optimize_portfolio(assets, constraints, historical_data)
+        result = self.manager.optimize_portfolio(assets, constraints, historical_data)
 
         assert 'weights' in result
         assert 'expected_return' in result
@@ -307,13 +307,13 @@ class TestIntegration:
 
     def test_risk_sentiment_integration(self):
         """Test l'intégration risque-sentiment."""
-        risk_engine = RiskEngine()
+        risk_manager = RiskManager()
         sentiment_analyzer = SentimentAnalyzer()
 
         portfolio = {'AAPL': 0.7, 'MSFT': 0.3}
 
         # Analyse de risque
-        risk_analysis = risk_engine.run_comprehensive_risk_analysis(portfolio)
+        risk_analysis = risk_manager.run_comprehensive_risk_analysis(portfolio)
 
         assert 'risk_metrics' in risk_analysis
         assert 'stress_tests' in risk_analysis

@@ -88,12 +88,13 @@ websockets>=13.1          # WebSocket client/server
 
 # === NLP & Sentiment ===
 transformers>=4.46.0      # Hugging Face transformers
-torch>=2.5.0              # PyTorch for deep learning
+torch>=2.0.0              # PyTorch for deep learning (compatible version)
 nltk>=3.9.1               # Natural language toolkit
 textblob>=0.18.0          # Simple NLP
 
 # === Risk Management ===
 pyportfolioopt>=1.5.5     # Portfolio optimization
+pypfopt>=1.5.5            # Alternative portfolio optimization
 
 # === Monitoring & Logging ===
 structlog>=24.1.0         # Structured logging

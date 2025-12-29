@@ -65,7 +65,7 @@ class StressTestResult:
     worst_asset: str
     worst_asset_loss: float
 
-class RiskEngine:
+class RiskManager:
     """
     Moteur de calcul des risques avancés.
     Implémente VaR historique, paramétrique et Monte Carlo, tests de stress, et optimisation de portefeuille.
@@ -619,8 +619,8 @@ class RiskEngine:
             }
 
 # Instance globale
-risk_engine = RiskEngine()
+risk_manager = RiskManager()
 
-def get_risk_engine() -> RiskEngine:
-    """Retourne l'instance globale du moteur de risque."""
-    return risk_engine
+def get_risk_manager() -> RiskManager:
+    """Retourne l'instance globale du gestionnaire de risque."""
+    return risk_manager
