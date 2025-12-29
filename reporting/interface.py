@@ -74,6 +74,7 @@ class TradingInterface:
             entry = trade_setup.get('entry_price')
             sl = trade_setup.get('stop_loss')
             tps = trade_setup.get('take_profits', [])
+            suggested_lot = trade_setup.get('suggested_lot', 0.01)
 
             report.append(f"Entrée      : {entry}")
             report.append(f"Stop-Loss   : {sl}")
@@ -90,9 +91,10 @@ class TradingInterface:
                     rr_ratio = reward / risk if risk > 0 else 0
                     report.append(f"Risk-Reward : 1:{rr_ratio:.2f}")
 
-                # Position size (placeholder)
-                risk_per_trade = config.risk.RISK_PER_TRADE * 100
-                report.append(f"Position Size: TBD (based on {risk_per_trade:.1f}% risk per trade)")
+            # Position size
+            risk_per_trade = config.risk.RISK_PER_TRADE * 100
+            report.append(f"Taille lot  : {suggested_lot:.2f} lots")
+            report.append(f"Risque/Trade: {risk_per_trade:.1f}%")
         
         # Raison du signal
         reason = analysis.get('reason', ml_prediction.get('action', '') if ml_prediction else '')
@@ -241,6 +243,8 @@ class TradingInterface:
         print("="*60)
 
         print(f"\n🔍 INDICATEURS TECHNIQUES:")
+        current_price = analysis.get('current_price', 'N/A')
+        print(f"  💰 PRIX ACTUEL: {Fore.CYAN}{current_price}{Style.RESET_ALL}")
 
         # Hurst Exponent
         hurst_value = analysis['hurst']['value']
@@ -287,6 +291,32 @@ class TradingInterface:
         else:
             print(f"  🤔 Smart Money Concepts: {Fore.YELLOW}{smc_signal}{Style.RESET_ALL}")
             print(f"     → Pas de signal clair, attendre")
+
+        # Divergences
+        div_data = analysis.get('divergence', {})
+        div_signal = div_data.get('signal', 'WAIT')
+        div_reason = div_data.get('reason', '')
+        if div_signal == 'BUY':
+            print(f"  📉 Divergence: {Fore.GREEN}{div_signal} (Bullish){Style.RESET_ALL}")
+            print(f"     → {div_reason}")
+        elif div_signal == 'SELL':
+            print(f"  📈 Divergence: {Fore.RED}{div_signal} (Bearish){Style.RESET_ALL}")
+            print(f"     → {div_reason}")
+        else:
+            print(f"  ↔️ Divergence: {Fore.YELLOW}Neutre{Style.RESET_ALL}")
+
+        # Wyckoff
+        wyck_data = analysis.get('wyckoff', {})
+        wyck_phase = wyck_data.get('phase', 'UNKNOWN')
+        wyck_signal = wyck_data.get('signal', 'WAIT')
+        if wyck_signal == 'BUY':
+            print(f"  📊 Wyckoff Phase: {Fore.GREEN}{wyck_phase} ({wyck_signal}){Style.RESET_ALL}")
+            print(f"     → Phase d'accumulation/markup détectée")
+        elif wyck_signal == 'SELL':
+            print(f"  📊 Wyckoff Phase: {Fore.RED}{wyck_phase} ({wyck_signal}){Style.RESET_ALL}")
+            print(f"     → Phase de distribution/markdown détectée")
+        else:
+            print(f"  📊 Wyckoff Phase: {Fore.YELLOW}{wyck_phase}{Style.RESET_ALL}")
 
         print(f"\n🎯 ANALYSE DE MARCHÉ COMPLÈTE:")
         combined_signal = analysis['combined_signal']
@@ -338,9 +368,9 @@ class TradingInterface:
 
         # Bilan final
         print(f"\n  📋 BILAN DE L'ANALYSE:")
-        total_signals = 3  # Hurst, Z-Score, Ichimoku, SMC
-        bullish_count = sum([ichi_signal == 'BUY', smc_signal == 'BUY', zscore < -1])
-        bearish_count = sum([ichi_signal == 'SELL', smc_signal == 'SELL', zscore > 1])
+        total_signals = 6  # Hurst, Z-Score, Ichimoku, SMC, Divergence, Wyckoff
+        bullish_count = sum([ichi_signal == 'BUY', smc_signal == 'BUY', div_signal == 'BUY', wyck_signal == 'BUY', zscore < -1])
+        bearish_count = sum([ichi_signal == 'SELL', smc_signal == 'SELL', div_signal == 'SELL', wyck_signal == 'SELL', zscore > 1])
 
         print(f"     Indicateurs analysés: {total_signals}")
         print(f"     Signaux haussiers: {bullish_count}")
@@ -389,10 +419,12 @@ class TradingInterface:
             confluence_count = sum([
                 ichi_signal == combined_signal,
                 smc_signal == combined_signal,
+                div_signal == combined_signal,
+                wyck_signal == combined_signal,
                 (zscore < -1 and combined_signal == 'BUY') or (zscore > 1 and combined_signal == 'SELL'),
                 hurst_regime == 'TRENDING'
             ])
-            print(f"     ✅ {confluence_count}/4 indicateurs confirment le signal")
+            print(f"     ✅ {confluence_count}/6 indicateurs confirment le signal")
             if confluence_count >= 3:
                 print(f"     🔥 CONFLUENCE ÉLEVÉE - Signal très fiable")
             elif confluence_count >= 2:
@@ -403,14 +435,9 @@ class TradingInterface:
             # Calcul de la taille de position
             print(f"\n  💰 CALCUL DE TAILLE DE POSITION:")
             risk_per_trade = config.risk.RISK_PER_TRADE
-            account_balance = 10000  # Placeholder - devrait venir de config
-            risk_amount = account_balance * risk_per_trade
-            position_size = risk_amount / risk if risk > 0 else 0
-
-            if 'JPY' in symbol:
-                print(f"     💵 Taille suggérée: {position_size:.2f} lots (risque {risk_per_trade*100:.1f}%)")
-            else:
-                print(f"     💵 Taille suggérée: {position_size:.2f} lots (risque {risk_per_trade*100:.1f}%)")
+            suggested_lot = trade_setup.get('suggested_lot', 0.01)
+            
+            print(f"     💵 Taille suggérée: {Fore.YELLOW}{suggested_lot:.2f} lots{Style.RESET_ALL} (risque {risk_per_trade*100:.1f}%)")
 
             print(f"     📏 Risque par trade: ${risk_amount:.2f}")
             print(f"     🎯 Gain potentiel: ${risk_amount * rr_ratio:.2f}")

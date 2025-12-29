@@ -29,6 +29,11 @@ try:
 except ImportError:
     requests = None
 
+try:
+    from alpha_vantage.foreignexchange import ForeignExchange
+except ImportError:
+    ForeignExchange = None
+
 # Ajouter le chemin parent pour les imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import config
@@ -532,11 +537,32 @@ class DataDownloader:
         }
         return limits.get(interval, 2)
     
+    def get_current_price(self, symbol: str) -> Optional[float]:
+        """
+        Récupère le prix actuel d'un symbole.
+
+        Args:
+            symbol: Symbole (ex: "EURUSD=X")
+
+        Returns:
+            Prix actuel ou None si échec
+        """
+        try:
+            ticker = yf.Ticker(symbol)
+            # Récupérer les données récentes (dernière journée)
+            data = ticker.history(period="1d", interval="1m")
+            if not data.empty:
+                return float(data['Close'].iloc[-1])
+        except Exception as e:
+            print(f"❌ Erreur récupération prix actuel pour {symbol}: {e}")
+
+        return None
+
     def _detect_price_anomalies(self, df: pd.DataFrame) -> int:
         """Détecte les anomalies de prix (variations extrêmes)."""
         if 'Close' not in df.columns:
             return 0
-        
+
         returns = df['Close'].pct_change()
         # Variations > 10% en une bougie = potentielle anomalie
         anomalies = (returns.abs() > 0.10).sum()

@@ -49,6 +49,8 @@ from core.zscore import BollingerZScore
 from analysis.multi_tf import MultiTimeframeAnalyzer
 from analysis.smc import SmartMoneyConceptsAnalyzer
 from analysis.ichimoku import IchimokuAnalyzer
+from analysis.divergences import DivergenceDetector
+from analysis.wyckoff import WyckoffAnalyzer
 from ml.features import MLFeaturesPreparer
 from ml.model import SignalClassifier
 from ml.trainer import ModelTrainer, EnsembleTrainer
@@ -92,6 +94,10 @@ class QuantumTradingSystem:
             print("✅ SmartMoneyConceptsAnalyzer initialisé")
             self.ichimoku = IchimokuAnalyzer()
             print("✅ IchimokuAnalyzer initialisé")
+            self.divergence_detector = DivergenceDetector()
+            print("✅ DivergenceDetector initialisé")
+            self.wyckoff_analyzer = WyckoffAnalyzer()
+            print("✅ WyckoffAnalyzer initialisé")
 
             # Composants ML
             print("Initialisation des composants ML...")
@@ -177,7 +183,9 @@ class QuantumTradingSystem:
         if df.empty:
             return {"error": "Pas de données"}
 
-        analysis = {}
+        analysis = {
+            'current_price': df['Close'].iloc[-1]
+        }
 
         # 1. Hurst Exponent
         hurst = self.hurst_calc.calculate(df['Close'])
@@ -198,7 +206,19 @@ class QuantumTradingSystem:
         smc_analysis = self.smc_analyzer.analyze(df)
         analysis['smc'] = smc_analysis['current_analysis']
 
-        # 5. Signal combiné
+        # 5. Divergences
+        div_signal = self.divergence_detector.get_divergence_signal(df)
+        analysis['divergence'] = div_signal
+
+        # 6. Wyckoff
+        wyckoff_structure = self.wyckoff_analyzer.analyze(df)
+        analysis['wyckoff'] = {
+            'phase': wyckoff_structure.phase,
+            'signal': wyckoff_structure.signal,
+            'confidence': wyckoff_structure.confidence
+        }
+
+        # 7. Signal combiné
         signal, confidence = self._combine_signals(analysis)
         analysis['combined_signal'] = signal
         analysis['confidence'] = confidence
@@ -257,6 +277,28 @@ class QuantumTradingSystem:
             weights.append(2)
             confirmations += 1
         elif smc_signal == 'SELL':
+            signals.append(-1)
+            weights.append(2)
+            confirmations += 1
+
+        # Divergences (poids moyen)
+        div_signal = analysis.get('divergence', {}).get('signal')
+        if div_signal == 'BUY':
+            signals.append(1)
+            weights.append(2)
+            confirmations += 1
+        elif div_signal == 'SELL':
+            signals.append(-1)
+            weights.append(2)
+            confirmations += 1
+
+        # Wyckoff (poids moyen)
+        wyckoff_signal = analysis.get('wyckoff', {}).get('signal', '')
+        if wyckoff_signal == 'BUY':
+            signals.append(1)
+            weights.append(2)
+            confirmations += 1
+        elif wyckoff_signal == 'SELL':
             signals.append(-1)
             weights.append(2)
             confirmations += 1
