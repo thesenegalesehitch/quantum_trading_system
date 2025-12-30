@@ -381,14 +381,14 @@ class WyckoffAnalyzer:
         # Signaux basés sur la phase
         if phase == WyckoffPhase.ACCUMULATION:
             if current_position == "in_range":
-                return "LEAN_BUY", 0.5
+                return "BUY", 0.65  # Augmenté de LEAN_BUY 0.5
         elif phase == WyckoffPhase.DISTRIBUTION:
             if current_position == "in_range":
-                return "LEAN_SELL", 0.5
+                return "SELL", 0.65  # Augmenté de LEAN_SELL 0.5
         elif phase == WyckoffPhase.MARKUP:
-            return "BUY", 0.6
+            return "BUY", 0.75  # Augmenté de 0.6
         elif phase == WyckoffPhase.MARKDOWN:
-            return "SELL", 0.6
+            return "SELL", 0.75  # Augmenté de 0.6
         
         return "WAIT", 0.3
     

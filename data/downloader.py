@@ -528,15 +528,15 @@ class DataDownloader:
         safe_symbol = symbol.replace("=", "_").replace("/", "_")
         return os.path.join(self.cache_dir, f"{safe_symbol}_{interval}.parquet")
     
-    def _get_max_years_for_interval(self, interval: str) -> int:
+    def _get_max_years_for_interval(self, interval: str) -> float:
         """Retourne le maximum d'années disponibles pour un intervalle."""
         limits = {
-            "1m": 0.02,  # ~7 jours
-            "2m": 0.02,
-            "5m": 0.02,
-            "15m": 0.02,
+            "1m": 0.16,  # ~60 jours
+            "2m": 0.16,
+            "5m": 0.16,
+            "15m": 0.16,
             "30m": 2,
-            "1h": 2,
+            "1h": 1.92,  # ~700 jours
             "4h": 2,
             "1d": 10,
             "1wk": 10,

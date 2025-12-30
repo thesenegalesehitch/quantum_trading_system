@@ -6,9 +6,14 @@ import pandas as pd
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime, timedelta
 import logging
+import sys
+import os
 from scipy import stats
 from scipy.optimize import minimize
 import arch
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config.settings import config
 # Portfolio optimization using scipy (pyportfolioopt not compatible with Python 3.13)
 # from pypfopt import EfficientFrontier, risk_models, expected_returns
 # from pypfopt import BlackLittermanModel, CovarianceShrinkage
@@ -124,7 +129,7 @@ class RiskManager:
             }
         }
 
-    def create_trade_setup(self, df: pd.DataFrame, symbol: str, signal: str) -> Optional[TradeSetup]:
+    def create_trade_setup(self, df: pd.DataFrame, symbol: str, signal: str, confidence: float = 100.0) -> Optional[TradeSetup]:
         """
         Calcule les paramètres optimaux pour un trade.
         
@@ -132,12 +137,18 @@ class RiskManager:
             df: DataFrame avec données et indicateurs
             symbol: Symbole tradé
             signal: BUY ou SELL
+            confidence: Niveau de confiance du signal (0-100)
             
         Returns:
             TradeSetup complet
         """
         if df.empty or signal not in ['BUY', 'SELL']:
             return None
+
+        # Alerte risque pour les signaux modérés (Wyckoff dynamique)
+        if confidence < 75:
+            reason = "contexte Wyckoff accumulation/distribution"
+            print(f"\n⚠️ ALERTE RISQUE: Signal modéré détecté ({confidence:.1f}%), entrée agressive basée sur {reason}.")
             
         current_price = df['Close'].iloc[-1]
         atr = df['atr'].iloc[-1] if 'atr' in df.columns else (current_price * 0.001)

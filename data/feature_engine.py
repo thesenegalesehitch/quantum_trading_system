@@ -5,7 +5,7 @@ Transforme les données brutes en features exploitables.
 
 import pandas as pd
 import numpy as np
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 import sys
 import os
 
@@ -162,7 +162,9 @@ class FeatureEngine:
 
         # Session de trading
         try:
-            result['session'] = self._get_trading_session(result.index.hour)
+            # Créer une série avec l'index correct pour éviter les problèmes d'alignement
+            hours_series = pd.Series(result.index.hour, index=result.index)
+            result['session'] = self._get_trading_session(hours_series)
         except Exception as e:
             print(f"⚠️ Erreur extraction session ({e}), ignoré")
 
@@ -272,9 +274,14 @@ class FeatureEngine:
             # Bollinger Bands
             bb = ta.bbands(result['Close'], length=20, std=2)
             if bb is not None:
-                result['bb_upper'] = bb['BBU_20_2.0']
-                result['bb_middle'] = bb['BBM_20_2.0']
-                result['bb_lower'] = bb['BBL_20_2.0']
+                # Fallback pour les noms de colonnes pandas-ta qui peuvent varier
+                upper_col = 'BBU_20_2.0' if 'BBU_20_2.0' in bb.columns else bb.columns[2]
+                mid_col = 'BBM_20_2.0' if 'BBM_20_2.0' in bb.columns else bb.columns[1]
+                lower_col = 'BBL_20_2.0' if 'BBL_20_2.0' in bb.columns else bb.columns[0]
+                
+                result['bb_upper'] = bb[upper_col]
+                result['bb_middle'] = bb[mid_col]
+                result['bb_lower'] = bb[lower_col]
                 result['bb_width'] = (result['bb_upper'] - result['bb_lower']) / result['bb_middle']
                 result['bb_position'] = (result['Close'] - result['bb_lower']) / (result['bb_upper'] - result['bb_lower'] + 1e-10)
 
@@ -358,9 +365,10 @@ class FeatureEngine:
         Détermine la session de trading.
         0: Asie, 1: Europe, 2: US, 3: Overlap
         """
-        sessions = pd.Series(index=hours.index, dtype=int)
+        sessions = pd.Series(index=hours.index, data=0, dtype=int)
         
-        for i, hour in enumerate(hours):
+        for i in range(len(hours)):
+            hour = hours.iloc[i]
             if 0 <= hour < 8:
                 sessions.iloc[i] = 0  # Asie
             elif 8 <= hour < 13:

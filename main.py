@@ -234,7 +234,8 @@ class QuantumTradingSystem:
             trade_setup = self.risk_manager.create_trade_setup(
                 df,
                 symbol,
-                signal
+                signal,
+                confidence=confidence
             )
             trade_setup = {
                 'entry_price': trade_setup.entry_price,
@@ -356,7 +357,8 @@ class QuantumTradingSystem:
             trade_setup = self.risk_manager.create_trade_setup(
                 self.data[symbol],
                 symbol,
-                signal
+                signal,
+                confidence=analysis['confidence']
             )
             trade_setup = {
                 'entry_price': trade_setup.entry_price,
