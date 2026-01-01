@@ -8,7 +8,6 @@ import numpy as np
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import yfinance as yf
-from alpha_vantage.foreignexchange import ForeignExchange
 from tqdm import tqdm
 import os
 import sys
