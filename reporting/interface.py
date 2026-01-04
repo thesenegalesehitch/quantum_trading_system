@@ -394,7 +394,9 @@ class TradingInterface:
             print(f"  ┌{'─'*58}┐")
             print(f"  │{Fore.CYAN}{'📈 DIRECTION: ACHAT' if combined_signal == 'BUY' else '📉 DIRECTION: VENTE'}{Style.RESET_ALL}{' '*(58-len('📈 DIRECTION: ACHAT' if combined_signal == 'BUY' else '📉 DIRECTION: VENTE'))}│")
             print(f"  ├{'─'*58}┤")
-            print(f"  │{Fore.CYAN}💰 PRIX D'ENTRÉE (ENTRY): {entry}{' '*(58-len(f'💰 PRIX D\'ENTRÉE (ENTRY): {entry}'))}│")
+            entry_text = f"💰 PRIX D'ENTRÉE (ENTRY): {entry}"
+            padding = ' ' * (58 - len(entry_text))
+            print(f"  │{Fore.CYAN}{entry_text}{padding}│")
 
             if sl:
                 risk_pips = abs(entry - sl) * 10000 if 'JPY' not in symbol else abs(entry - sl) * 100

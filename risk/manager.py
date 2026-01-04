@@ -10,7 +10,11 @@ import sys
 import os
 from scipy import stats
 from scipy.optimize import minimize
-import arch
+
+try:
+    import arch
+except ImportError:
+    arch = None
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import config
